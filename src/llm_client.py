@@ -84,8 +84,54 @@ class HealthReport:
         return "\n".join(lines)
 
 
+CLOUD_PROVIDERS: dict[str, dict[str, Any]] = {
+    "groq": {
+        "name": "⚡ Groq (бесплатно, мгновенный стриминг)",
+        "base_url": "https://api.groq.com/openai/v1",
+        "models": [
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "mixtral-8x7b-32768",
+            "gemma2-9b-it",
+        ],
+        "default_model": "llama-3.3-70b-versatile",
+        "key_url": "https://console.groq.com/keys",
+    },
+    "gemini": {
+        "name": "✨ Google Gemini API (бесплатный тариф)",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "models": [
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-2.0-flash-lite",
+        ],
+        "default_model": "gemini-2.0-flash",
+        "key_url": "https://aistudio.google.com/app/apikey",
+    },
+    "openrouter": {
+        "name": "🌐 OpenRouter (бесплатные модели :free)",
+        "base_url": "https://openrouter.ai/api/v1",
+        "models": [
+            "deepseek/deepseek-r1:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "google/gemini-2.0-flash-exp:free",
+            "qwen/qwen-2.5-72b-instruct:free",
+        ],
+        "default_model": "deepseek/deepseek-r1:free",
+        "key_url": "https://openrouter.ai/keys",
+    },
+    "custom": {
+        "name": "🛠️ Свой OpenAI-совместимый сервер",
+        "base_url": "https://api.openai.com/v1",
+        "models": ["gpt-4o-mini", "custom-model"],
+        "default_model": "gpt-4o-mini",
+        "key_url": "",
+    },
+}
+
+
 class LLMClient:
-    """Единая точка входа к локальным моделям."""
+    """Единая точка входа к локальным и облачным моделям."""
 
     def __init__(
         self,
@@ -96,10 +142,12 @@ class LLMClient:
         cloud_api_key: str | None = None,
         cloud_base_url: str | None = None,
         cloud_model: str | None = None,
+        provider: str | None = None,
     ):
         config = self._load_config(config_path)
         self.config = config
 
+        self.provider = (provider or os.environ.get("DIBOT_PROVIDER", "auto")).lower()
         ollama_cfg = config.get("ollama") or {}
         env_ollama = os.environ.get("OLLAMA_BASE_URL", "").strip()
         self.base_url = (base_url or env_ollama or ollama_cfg.get("base_url") or "http://localhost:11434").rstrip("/")
@@ -233,6 +281,24 @@ class LLMClient:
         merged_options = dict(route.options)
         merged_options.update(options or {})
 
+        # Прямое перенаправление на облачный API, если выбран облачный провайдер или модель
+        if (
+            self.provider == "cloud"
+            or (model and (model.startswith("cloud:") or any(model.startswith(p + ":") for p in CLOUD_PROVIDERS)))
+        ):
+            target_model = model
+            if target_model and target_model.startswith("cloud:"):
+                target_model = target_model[6:]
+            return self._post_cloud_chat(
+                messages=prepared,
+                options=merged_options,
+                json_format=json_format,
+                timeout=timeout or 120,
+                task=route.task,
+                model_override=target_model,
+                on_stream=on_stream,
+            )
+
         last_error: Exception | None = None
         for candidate in chain:
             try:
@@ -277,6 +343,7 @@ class LLMClient:
                         json_format=json_format,
                         timeout=timeout or 120,
                         task=route.task,
+                        on_stream=on_stream,
                     )
                 raise
             except requests.RequestException as exc:
@@ -500,8 +567,10 @@ class LLMClient:
         json_format: bool | str | None,
         timeout: float,
         task: str,
+        model_override: str | None = None,
+        on_stream: Any = None,
     ) -> ChatResult:
-        """Облачный OpenAI-совместимый резерв (Groq / OpenRouter / Gemini) для деплоя в облаке."""
+        """Облачный OpenAI-совместимый провайдер (Groq / OpenRouter / Gemini / Custom) со стримингом токенов."""
         oai_messages: list[dict[str, Any]] = []
         for msg in messages:
             role = msg.get("role") or "user"
@@ -520,40 +589,134 @@ class LLMClient:
             else:
                 oai_messages.append({"role": role, "content": content})
 
+        model_name = (model_override or self.cloud_model or "").strip() or "llama-3.3-70b-versatile"
+        do_stream = on_stream is not None and not json_format
+
         payload: dict[str, Any] = {
-            "model": self.cloud_model,
+            "model": model_name,
             "messages": oai_messages,
             "temperature": float(options.get("temperature", 0.3)),
+            "stream": do_stream,
         }
         if json_format:
             payload["response_format"] = {"type": "json_object"}
 
+        headers = {
+            "Authorization": f"Bearer {self.cloud_api_key}",
+            "Content-Type": "application/json",
+        }
+        if "openrouter" in self.cloud_base_url.lower():
+            headers["HTTP-Referer"] = "https://github.com/sosiskacorp/DIBot"
+            headers["X-Title"] = "DIBot Education Assistant"
+
         started = time.perf_counter()
-        resp = self._session.post(
-            f"{self.cloud_base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.cloud_api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=timeout,
-        )
-        if not resp.ok:
-            raise LLMError(f"Ошибка облачного API ({resp.status_code}): {resp.text[:300]}")
-        data = resp.json()
+
+        if not do_stream:
+            resp = self._session.post(
+                f"{self.cloud_base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+            if not resp.ok:
+                raise LLMError(f"Ошибка облачного API ({resp.status_code}): {resp.text[:300]}")
+            data = resp.json()
+            elapsed = time.perf_counter() - started
+            choice = (data.get("choices") or [{}])[0]
+            msg_obj = choice.get("message") or {}
+            usage = data.get("usage") or {}
+            return ChatResult(
+                text=(msg_obj.get("content") or "").strip(),
+                model=f"cloud:{data.get('model') or model_name}",
+                task=task,
+                thinking=(msg_obj.get("reasoning_content") or "").strip(),
+                prompt_tokens=int(usage.get("prompt_tokens") or 0),
+                output_tokens=int(usage.get("completion_tokens") or 0),
+                seconds=round(elapsed, 3),
+                done_reason=choice.get("finish_reason") or "stop",
+            )
+
+        # Режим потоковой передачи токенов в реальном времени (Server-Sent Events)
+        try:
+            resp = self._session.post(
+                f"{self.cloud_base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+                stream=True,
+            )
+            if not resp.ok:
+                raise LLMError(f"Ошибка облачного API ({resp.status_code}): {resp.text[:300]}")
+        except requests.RequestException as exc:
+            raise LLMError(f"Ошибка подключения к облачному API: {exc}") from exc
+
+        text_parts: list[str] = []
+        thinking_parts: list[str] = []
+        display_model = f"cloud:{model_name}"
+        done_reason = "stop"
+        output_tokens = 0
+
+        for line_raw in resp.iter_lines():
+            if not line_raw:
+                continue
+            line = line_raw.decode("utf-8", errors="replace").strip()
+            if not line.startswith("data:"):
+                continue
+            data_str = line[5:].strip()
+            if data_str == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+            except Exception:
+                continue
+
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            choice = choices[0]
+            delta = choice.get("delta") or {}
+            if choice.get("finish_reason"):
+                done_reason = choice["finish_reason"]
+
+            delta_reasoning = delta.get("reasoning_content") or ""
+            if delta_reasoning:
+                thinking_parts.append(delta_reasoning)
+                if on_stream:
+                    try:
+                        on_stream("thinking", "".join(thinking_parts), display_model)
+                    except Exception:
+                        pass
+
+            delta_content = delta.get("content") or ""
+            if delta_content:
+                text_parts.append(delta_content)
+                output_tokens += 1
+                if on_stream:
+                    try:
+                        on_stream("content", "".join(text_parts), display_model)
+                    except Exception:
+                        pass
+
         elapsed = time.perf_counter() - started
-        choice = (data.get("choices") or [{}])[0]
-        msg_obj = choice.get("message") or {}
-        usage = data.get("usage") or {}
+        full_text = "".join(text_parts).strip()
+        full_thinking = "".join(thinking_parts).strip()
+
+        if "<think>" in full_text and "</think>" in full_text:
+            t_start = full_text.find("<think>") + 7
+            t_end = full_text.find("</think>")
+            if not full_thinking:
+                full_thinking = full_text[t_start:t_end].strip()
+            full_text = (full_text[:t_start - 7] + full_text[t_end + 8:]).strip()
+
         return ChatResult(
-            text=(msg_obj.get("content") or "").strip(),
-            model=f"cloud:{data.get('model') or self.cloud_model}",
+            text=full_text,
+            model=display_model,
             task=task,
-            thinking=(msg_obj.get("reasoning_content") or "").strip(),
-            prompt_tokens=int(usage.get("prompt_tokens") or 0),
-            output_tokens=int(usage.get("completion_tokens") or 0),
+            thinking=full_thinking,
+            prompt_tokens=0,
+            output_tokens=output_tokens,
             seconds=round(elapsed, 3),
-            done_reason=choice.get("finish_reason") or "stop",
+            done_reason=done_reason,
         )
 
     # ------------------------------------------------------------- проверка

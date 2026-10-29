@@ -173,6 +173,59 @@ class Tutor:
         self.verifier = Verifier(self.llm)
         self.verify_tasks = tuple(verify_tasks)
 
+    def compact_history(
+        self,
+        history: Sequence[dict[str, str]],
+        keep_recent: int = 3,
+    ) -> list[dict[str, str]]:
+        """Сжатие контекста: суммаризация старых сообщений диалога для экономии токенов."""
+        if not history or len(history) <= keep_recent:
+            return list(history)
+
+        older = list(history[:-keep_recent])
+        recent = list(history[-keep_recent:])
+
+        total_chars = sum(len(m.get("content", "")) for m in older)
+        if total_chars < 1000:
+            return list(history)
+
+        dialogue_text = "\n\n".join(
+            f"{'Пользователь' if m.get('role') == 'user' else 'Ассистент'}: {m.get('content', '')[:500]}"
+            for m in older
+        )
+        prompt = (
+            "Сделай краткую, но ёмкую выжимку предыдущей части диалога для экономии контекста нейросети.\n"
+            "Сохрани все ключевые факты, условия решаемых задач, введённые формулы и выводы.\n"
+            "Не пиши вводных слов, пиши строго суть в 2–4 пунктах:\n\n"
+            f"{dialogue_text}"
+        )
+        try:
+            res = self.llm.chat(
+                task="summary",
+                messages=[{"role": "user", "content": prompt}],
+                timeout=25.0,
+            )
+            summary_text = res.text.strip()
+            if summary_text:
+                compacted_turn = {
+                    "role": "user",
+                    "content": f"📌 [Контекст предыдущей беседы]:\n{summary_text}",
+                }
+                return [compacted_turn, *recent]
+        except Exception:
+            pass
+
+        truncated_older = []
+        for m in older:
+            c = m.get("content", "")
+            truncated_older.append(
+                {
+                    "role": m.get("role", "user"),
+                    "content": c[:200] + ("…" if len(c) > 200 else ""),
+                }
+            )
+        return [*truncated_older, *recent]
+
     # --------------------------------------------------------------- вопрос
 
     def ask(
@@ -187,6 +240,8 @@ class Tutor:
         on_stream: Any = None,
     ) -> Answer:
         started = time.perf_counter()
+        if history and len(history) > 6:
+            history = self.compact_history(history, keep_recent=3)
         clean_question = (question or "").strip() or "Разбери и реши задание на изображении."
         extracted_image_text = ""
         vision_model_used = ""

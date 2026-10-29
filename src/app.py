@@ -102,6 +102,7 @@ from lms_reader import (  # noqa: E402
 from materials import MaterialStore, slugify  # noqa: E402
 from notes import NoteBuilder  # noqa: E402
 from tutor import Answer, Tutor  # noqa: E402
+from llm_client import CLOUD_PROVIDERS  # noqa: E402
 
 st.set_page_config(
     page_title="DIBot — учебный ассистент НГТУ",
@@ -159,6 +160,10 @@ def _default_gateway_url() -> str:
 
 def _init_session_credentials() -> None:
     """Хранить все ключи СТРОГО в st.session_state текущей вкладки/устройства, а НЕ в глобальном os.environ!"""
+    if "session_model_provider" not in st.session_state:
+        st.session_state["session_model_provider"] = "auto"
+    if "session_cloud_provider" not in st.session_state:
+        st.session_state["session_cloud_provider"] = "groq"
     if "session_ollama_url" not in st.session_state:
         st.session_state["session_ollama_url"] = _default_gateway_url()
     if "session_ollama_key" not in st.session_state:
@@ -193,6 +198,7 @@ def get_tutor() -> Tutor:
         cloud_api_key=st.session_state.get("session_cloud_key", ""),
         cloud_base_url=st.session_state.get("session_cloud_url", ""),
         cloud_model=st.session_state.get("session_cloud_model", ""),
+        provider=st.session_state.get("session_model_provider", "auto"),
     )
     return Tutor(llm=llm, store=get_store())
 
@@ -332,6 +338,14 @@ def open_material_reader_dialog(
 
 CHAT_HISTORY_FILE = PROJECT_ROOT / "data" / "chat_sessions.json"  # старый общий файл (только для миграции)
 CHAT_HISTORY_DIR = PROJECT_ROOT / "data" / "chat_history"
+CHAT_UPLOADS_DIR = PROJECT_ROOT / "data" / "chat_uploads"
+
+
+def _chat_uploads_dir(owner_key: str) -> Path:
+    safe = "".join(ch for ch in owner_key if ch.isalnum())[:32] or "common"
+    p = CHAT_UPLOADS_DIR / safe
+    p.mkdir(parents=True, exist_ok=True)
+    return p
 
 
 def _dispace_user_from_token(token: str) -> dict[str, Any] | None:
@@ -361,14 +375,48 @@ def _chat_history_file(owner_key: str) -> Path | None:
 
 def _serialize_chat_sessions(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
+    owner_key = st.session_state.get("chat_owner") or st.session_state.get("dibot_user_key") or "common"
+    uploads_dir = _chat_uploads_dir(owner_key)
+
     for s in sessions:
         turns_clean = []
-        for t in s.get("turns") or []:
+        for t_idx, t in enumerate(s.get("turns") or []):
             ans_obj: Answer | None = t.get("answer")
+
+            # Сохраняем прикреплённые изображения на диск и записываем пути
+            saved_images: list[str] = []
+            for img_idx, img in enumerate(t.get("images") or []):
+                if isinstance(img, str):
+                    saved_images.append(img)
+                elif isinstance(img, (bytes, bytearray)):
+                    img_file = uploads_dir / f"{s['id']}_t{t_idx}_i{img_idx}.png"
+                    try:
+                        img_file.write_bytes(bytes(img))
+                        rel = str(img_file.relative_to(PROJECT_ROOT)).replace("\\", "/")
+                        saved_images.append(rel)
+                    except Exception:
+                        pass
+
+            # Сохраняем видео на диск и записываем пути
+            saved_videos: list[str] = []
+            for vid_idx, vid in enumerate(t.get("videos") or []):
+                if isinstance(vid, str):
+                    saved_videos.append(vid)
+                elif isinstance(vid, (bytes, bytearray)):
+                    vid_file = uploads_dir / f"{s['id']}_t{t_idx}_v{vid_idx}.mp4"
+                    try:
+                        vid_file.write_bytes(bytes(vid))
+                        rel = str(vid_file.relative_to(PROJECT_ROOT)).replace("\\", "/")
+                        saved_videos.append(rel)
+                    except Exception:
+                        pass
+
             turns_clean.append(
                 {
                     "role": t.get("role", "user"),
                     "content": t.get("content", ""),
+                    "images": saved_images,
+                    "videos": saved_videos,
                     "meta": (
                         {
                             "task": ans_obj.task,
@@ -589,7 +637,7 @@ def render_verification(report) -> None:
             st.markdown(f"{mark} **{check.layer}** — {check.detail}")
 
 
-def render_assistant_turn(turn: dict[str, Any]) -> None:
+def render_assistant_turn(turn: dict[str, Any], is_latest: bool = False, turn_idx: int = 0) -> None:
     """Отрисовать сообщение ассистента со всеми деталями (фото-OCR, формулы, видео, ход мыслей, проверка)."""
     ans: Answer | None = turn.get("answer")
     if ans is None:
@@ -608,6 +656,15 @@ def render_assistant_turn(turn: dict[str, Any]) -> None:
             st.caption(" · ".join(badges))
         if meta.get("sources"):
             st.caption("📚 Источники: " + " · ".join(meta["sources"][:5]))
+        if is_latest:
+            col_act1, _ = st.columns([1.2, 4])
+            with col_act1:
+                if st.button("🔄 Перегенерировать ответ", key=f"btn_retry_{turn_idx}", help="Повторить запрос с теми же файлами и условием"):
+                    if st.session_state.chat_turns and st.session_state.chat_turns[-1].get("role") == "assistant":
+                        st.session_state.chat_turns.pop()
+                        st.session_state["trigger_retry"] = True
+                        _save_active_chat_turns()
+                        st.rerun()
         return
 
     if ans.extracted_image_text:
@@ -633,6 +690,16 @@ def render_assistant_turn(turn: dict[str, Any]) -> None:
 
     if ans.verification:
         render_verification(ans.verification)
+
+    if is_latest:
+        col_act1, _ = st.columns([1.2, 4])
+        with col_act1:
+            if st.button("🔄 Перегенерировать ответ", key=f"btn_retry_{turn_idx}", help="Повторить запрос с теми же файлами и условием"):
+                if st.session_state.chat_turns and st.session_state.chat_turns[-1].get("role") == "assistant":
+                    st.session_state.chat_turns.pop()
+                    st.session_state["trigger_retry"] = True
+                    _save_active_chat_turns()
+                    st.rerun()
 
 
 # ------------------------------------------------------------------ сайдбар
@@ -690,62 +757,110 @@ with st.sidebar:
     with col_s2:
         st.metric("Фрагментов", stats["chunks"])
 
-    if status["ok"]:
-        conn_label = "Удалённый локальный Ollama" if status.get("is_remote") else "Локальный Ollama"
-        st.success(f"{conn_label}: {len(status['models'])} моделей готово")
-    elif st.session_state.get("session_cloud_key"):
-        st.success(f"Облачный ИИ: {st.session_state.get('session_cloud_model', 'llama-3.3-70b-versatile')}")
+    active_prov = st.session_state.get("session_model_provider", "auto")
+    prov_mode = st.radio(
+        "Источник модели",
+        ["🖥️ Локальная Ollama (GPU)", "☁️ Бесплатные облачные модели"],
+        index=1 if active_prov == "cloud" else 0,
+        label_visibility="collapsed",
+    )
+    if prov_mode.startswith("☁️"):
+        st.session_state["session_model_provider"] = "cloud"
     else:
-        st.warning("🔒 Локальная модель не подключена (введи токен доступа ниже)")
+        st.session_state["session_model_provider"] = "ollama"
 
-    with st.expander("🔒 Подключение к локальной модели (для этого устройства)", expanded=not status["ok"]):
-        st.caption(
-            "Ключ сохраняется **только в памяти текущей вкладки браузера** (`st.session_state`) "
-            "и недоступен другим устройствам."
-        )
-        remote_ollama_url = st.text_input(
-            "HTTPS URL шлюза (OLLAMA_BASE_URL)",
-            value=st.session_state.get("session_ollama_url", ""),
-            placeholder="https://xxxx-xxxx.trycloudflare.com",
-        )
-        remote_ollama_key = st.text_input(
-            "Секретный токен (OLLAMA_API_KEY)",
-            value=st.session_state.get("session_ollama_key", ""),
-            type="password",
-            placeholder="dibot_sk_...",
-        )
-        if st.button("Подключить на этом устройстве", type="primary", width="stretch"):
-            st.session_state["session_ollama_url"] = remote_ollama_url.strip().rstrip("/")
-            st.session_state["session_ollama_key"] = remote_ollama_key.strip()
-            st.rerun()
+    if st.session_state["session_model_provider"] == "cloud":
+        cur_cloud_key = st.session_state.get("session_cloud_key", "")
+        if cur_cloud_key:
+            st.success(f"☁️ Облачная модель: `{st.session_state.get('session_cloud_model', 'llama-3.3-70b-versatile')}`")
+        else:
+            st.warning("☁️ Настройте бесплатный облачный API ниже")
 
-        if st.session_state.get("session_ollama_key") or st.session_state.get("session_cloud_key"):
-            if st.button("🔒 Отключить модель на этом устройстве", width="stretch"):
-                st.session_state["session_ollama_key"] = ""
-                st.session_state["session_cloud_key"] = ""
+        with st.expander("⚙️ Настройка облачной модели", expanded=not bool(cur_cloud_key)):
+            st.caption("Используйте бесплатные модели из Groq, Google Gemini или OpenRouter со стримингом ответа.")
+            prov_keys = list(CLOUD_PROVIDERS.keys())
+            saved_cp = st.session_state.get("session_cloud_provider", "groq")
+            cp_idx = prov_keys.index(saved_cp) if saved_cp in prov_keys else 0
+            chosen_cp = st.selectbox(
+                "Облачный провайдер",
+                prov_keys,
+                index=cp_idx,
+                format_func=lambda k: CLOUD_PROVIDERS[k]["name"],
+            )
+            st.session_state["session_cloud_provider"] = chosen_cp
+            cp_data = CLOUD_PROVIDERS[chosen_cp]
+
+            if cp_data.get("key_url"):
+                st.link_button("🔑 Получить бесплатный API-ключ", cp_data["key_url"], use_container_width=True)
+
+            c_key = st.text_input(
+                "API-ключ",
+                value=st.session_state.get("session_cloud_key", ""),
+                type="password",
+                placeholder="gsk_... / AIza... / sk-or-...",
+            )
+
+            known_models = cp_data.get("models") or []
+            cur_mod = st.session_state.get("session_cloud_model") or cp_data.get("default_model") or ""
+            m_idx = known_models.index(cur_mod) if cur_mod in known_models else 0
+            selected_mod_item = st.selectbox(
+                "Модель",
+                known_models + ["Ввести имя вручную…"],
+                index=m_idx,
+            )
+            if selected_mod_item == "Ввести имя вручную…":
+                chosen_mod_name = st.text_input("Имя модели", value=cur_mod)
+            else:
+                chosen_mod_name = selected_mod_item
+
+            default_url = cp_data.get("base_url", "https://api.groq.com/openai/v1")
+            c_url = st.text_input("Base URL", value=st.session_state.get("session_cloud_url") or default_url)
+
+            if st.button("Сохранить параметры облачной модели", type="primary", width="stretch"):
+                st.session_state["session_cloud_key"] = c_key.strip()
+                st.session_state["session_cloud_url"] = c_url.strip()
+                st.session_state["session_cloud_model"] = chosen_mod_name.strip()
                 st.rerun()
 
-        st.divider()
-        st.caption("Резервный облачный API (если локальный ПК выключен):")
-        cloud_key = st.text_input(
-            "API-ключ (Groq / OpenRouter)",
-            value=st.session_state.get("session_cloud_key", ""),
-            type="password",
-            placeholder="gsk_... или sk-or-...",
-        )
-        cloud_url = st.text_input(
-            "Base URL",
-            value=st.session_state.get("session_cloud_url", "https://api.groq.com/openai/v1"),
-        )
-        cloud_mod = st.text_input(
-            "Модель",
-            value=st.session_state.get("session_cloud_model", "llama-3.3-70b-versatile"),
-        )
-        if st.button("Сохранить резервный API", width="stretch") and cloud_key.strip():
-            st.session_state["session_cloud_key"] = cloud_key.strip()
-            st.session_state["session_cloud_url"] = cloud_url.strip()
-            st.session_state["session_cloud_model"] = cloud_mod.strip()
-            st.rerun()
+            if cur_cloud_key:
+                if st.button("Отключить облачный API", width="stretch"):
+                    st.session_state["session_cloud_key"] = ""
+                    st.rerun()
+    else:
+        if status["ok"]:
+            conn_label = "Удалённый локальный Ollama" if status.get("is_remote") else "Локальный Ollama"
+            st.success(f"{conn_label}: {len(status['models'])} моделей готово")
+        elif st.session_state.get("session_cloud_key"):
+            st.success(f"Облачный ИИ: {st.session_state.get('session_cloud_model', 'llama-3.3-70b-versatile')}")
+        else:
+            st.warning("🔒 Локальная модель не подключена (введи токен доступа ниже)")
+
+        with st.expander("🔒 Подключение к локальной модели (для этого устройства)", expanded=not status["ok"]):
+            st.caption(
+                "Ключ сохраняется **только в памяти текущей вкладки браузера** (`st.session_state`) "
+                "и недоступен другим устройствам."
+            )
+            remote_ollama_url = st.text_input(
+                "HTTPS URL шлюза (OLLAMA_BASE_URL)",
+                value=st.session_state.get("session_ollama_url", ""),
+                placeholder="https://xxxx-xxxx.trycloudflare.com",
+            )
+            remote_ollama_key = st.text_input(
+                "Секретный токен (OLLAMA_API_KEY)",
+                value=st.session_state.get("session_ollama_key", ""),
+                type="password",
+                placeholder="dibot_sk_...",
+            )
+            if st.button("Подключить на этом устройстве", type="primary", width="stretch"):
+                st.session_state["session_ollama_url"] = remote_ollama_url.strip().rstrip("/")
+                st.session_state["session_ollama_key"] = remote_ollama_key.strip()
+                st.rerun()
+
+            if st.session_state.get("session_ollama_key") or st.session_state.get("session_cloud_key"):
+                if st.button("🔒 Отключить модель на этом устройстве", width="stretch"):
+                    st.session_state["session_ollama_key"] = ""
+                    st.session_state["session_cloud_key"] = ""
+                    st.rerun()
 
     if status["loaded"]:
         for item in status["loaded"]:
@@ -857,6 +972,38 @@ tabs = st.tabs(
 with tabs[0]:
     _init_chat_sessions()
 
+    # Панель заголовка текущего диалога с индикатором токенов и кнопкой сжатия контекста
+    col_hdr1, col_hdr2 = st.columns([4, 1.3])
+    with col_hdr1:
+        active_sess = next(
+            (s for s in st.session_state.get("chat_sessions", []) if s["id"] == st.session_state.get("active_chat_id")),
+            None,
+        )
+        active_title = active_sess["title"] if active_sess else "Диалог"
+        turns_cnt = len(st.session_state.chat_turns)
+        est_tokens = sum(len(str(t.get("content", ""))) for t in st.session_state.chat_turns) // 4
+        st.caption(f"💬 **{active_title}** · Реплик: {turns_cnt} · ~{est_tokens:,} токенов".replace(",", " "))
+    with col_hdr2:
+        if turns_cnt >= 4:
+            if st.button("🗜️ Сжать контекст", key="btn_compact_session_top", help="Суммаризировать старые реплики для освобождения контекстного окна"):
+                with st.spinner("Сжимаю контекст диалога…"):
+                    tutor = get_tutor()
+                    hist_for_compact = []
+                    for t in st.session_state.chat_turns:
+                        c = t.get("content", "")
+                        if not c and t.get("answer"):
+                            c = t["answer"].text
+                        if c:
+                            hist_for_compact.append({"role": t.get("role", "user"), "content": c})
+                    compacted = tutor.compact_history(hist_for_compact, keep_recent=2)
+                    new_turns = []
+                    for m in compacted:
+                        new_turns.append({"role": m["role"], "content": m["content"]})
+                    st.session_state.chat_turns = new_turns
+                    _save_active_chat_turns()
+                    st.toast("Контекст диалога успешно сжат!", icon="🗜️")
+                    st.rerun()
+
     # Приветственный экран и быстрые подсказки, когда чат пуст
     if not st.session_state.chat_turns:
         st.markdown("### 💬 Учебный чат с поддержкой фото, видео, формул и файлов")
@@ -883,22 +1030,39 @@ with tabs[0]:
     # Отрисовка истории сообщений
     chat_container = st.container()
     with chat_container:
-        for turn in st.session_state.chat_turns:
+        for idx, turn in enumerate(st.session_state.chat_turns):
             with st.chat_message(turn["role"]):
                 if turn["role"] == "user":
                     if turn.get("images"):
-                        for idx, img_bytes in enumerate(turn["images"]):
+                        for img_idx, img_ref in enumerate(turn["images"]):
+                            img_source = img_ref
+                            if isinstance(img_ref, str):
+                                p = PROJECT_ROOT / img_ref if not Path(img_ref).is_absolute() else Path(img_ref)
+                                if p.exists():
+                                    img_source = str(p)
                             with st.container(border=True):
-                                st.image(img_bytes, use_container_width=True)
-                                with st.expander(f"🔍 Исходное разрешение фото #{idx+1} (1:1)", expanded=False):
-                                    st.image(img_bytes, use_container_width=False)
+                                st.image(img_source, use_container_width=True)
+                                with st.expander(f"🔍 Исходное разрешение фото #{img_idx+1} (1:1)", expanded=False):
+                                    st.image(img_source, use_container_width=False)
                     if turn.get("videos"):
-                        for vid_bytes in turn["videos"]:
-                            st.video(vid_bytes)
+                        for vid_ref in turn["videos"]:
+                            vid_source = vid_ref
+                            if isinstance(vid_ref, str):
+                                p = PROJECT_ROOT / vid_ref if not Path(vid_ref).is_absolute() else Path(vid_ref)
+                                if p.exists():
+                                    vid_source = str(p)
+                            st.video(vid_source)
                     if turn.get("content"):
                         render_rich_content(turn["content"])
                 else:
-                    render_assistant_turn(turn)
+                    is_latest = (idx == len(st.session_state.chat_turns) - 1)
+                    render_assistant_turn(turn, is_latest=is_latest, turn_idx=idx)
+
+    # Проверка на повторный перезапуск промпта при сбое или обрыве
+    is_retry_run = False
+    if st.session_state.pop("trigger_retry", False):
+        if st.session_state.chat_turns and st.session_state.chat_turns[-1].get("role") == "user":
+            is_retry_run = True
 
     # Поле ввода чата с прикреплением фото, видео и документов в любых кодировках
     if not IS_AUTHORIZED:
@@ -918,11 +1082,18 @@ with tabs[0]:
     )
 
     user_text = ""
-    attached_images: list[bytes] = []
-    attached_videos: list[bytes] = []
+    attached_images: list[Any] = []
+    attached_videos: list[Any] = []
     attached_docs_text: list[str] = []
 
-    if chat_submission is not None:
+    if is_retry_run:
+        last_turn = st.session_state.chat_turns[-1]
+        user_text = last_turn.get("content", "")
+        attached_images = list(last_turn.get("images") or [])
+        attached_videos = list(last_turn.get("videos") or [])
+    elif chat_submission is not None:
+        owner_key = st.session_state.get("chat_owner") or st.session_state.get("dibot_user_key") or "common"
+        uploads_dir = _chat_uploads_dir(owner_key)
         if isinstance(chat_submission, str):
             user_text = chat_submission.strip()
         else:
@@ -930,10 +1101,19 @@ with tabs[0]:
             for f_obj in getattr(chat_submission, "files", None) or []:
                 fname = str(getattr(f_obj, "name", "") or "").lower()
                 raw_data = bytes(f_obj.getvalue())
+                s_name = f"{int(time.time()*1000)}_{slugify(f_obj.name)[:30]}{Path(f_obj.name).suffix}"
+                saved_f = uploads_dir / s_name
+                try:
+                    saved_f.write_bytes(raw_data)
+                    rel_path = str(saved_f.relative_to(PROJECT_ROOT)).replace("\\", "/")
+                except Exception:
+                    rel_path = ""
+                file_ref = rel_path or raw_data
+
                 if fname.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")):
-                    attached_images.append(raw_data)
+                    attached_images.append(file_ref)
                 elif fname.endswith((".mp4", ".webm", ".mov")):
-                    attached_videos.append(raw_data)
+                    attached_videos.append(file_ref)
                 elif fname.endswith(".pdf"):
                     try:
                         attached_docs_text.append(f"--- Файл {f_obj.name} ---\n{extract_pdf_bytes(raw_data)[:6000]}")
@@ -957,7 +1137,7 @@ with tabs[0]:
         docs_joined = "\n\n".join(attached_docs_text)
         user_text = f"{user_text}\n\nПрикреплённый текст:\n{docs_joined}".strip()
 
-    if user_text or attached_images or attached_videos:
+    if user_text or attached_images or attached_videos or is_retry_run:
         display_text = (
             user_text
             or ("📷 Разбери и реши задание на прикреплённом фото." if attached_images else "🎬 Прикреплено видео.")
@@ -965,7 +1145,8 @@ with tabs[0]:
 
         # Собираем историю предыдущих реплик для многошагового контекста
         history_messages: list[dict[str, str]] = []
-        for prev in st.session_state.chat_turns[-8:]:
+        source_turns = st.session_state.chat_turns[:-1] if is_retry_run else st.session_state.chat_turns
+        for prev in source_turns[-8:]:
             role = prev["role"]
             if role == "user":
                 content = prev.get("content") or ""
@@ -975,27 +1156,39 @@ with tabs[0]:
             if content:
                 history_messages.append({"role": role, "content": content})
 
-        st.session_state.chat_turns.append(
-            {
-                "role": "user",
-                "content": display_text,
-                "images": attached_images,
-                "videos": attached_videos,
-            }
-        )
+        if not is_retry_run:
+            st.session_state.chat_turns.append(
+                {
+                    "role": "user",
+                    "content": display_text,
+                    "images": attached_images,
+                    "videos": attached_videos,
+                }
+            )
 
         with chat_container:
-            with st.chat_message("user"):
-                if attached_images:
-                    for idx, img_bytes in enumerate(attached_images):
-                        with st.container(border=True):
-                            st.image(img_bytes, use_container_width=True)
-                            with st.expander(f"🔍 Исходное разрешение фото #{idx+1} (1:1)", expanded=False):
-                                st.image(img_bytes, use_container_width=False)
-                if attached_videos:
-                    for vid_bytes in attached_videos:
-                        st.video(vid_bytes)
-                render_rich_content(display_text)
+            if not is_retry_run:
+                with st.chat_message("user"):
+                    if attached_images:
+                        for idx, img_ref in enumerate(attached_images):
+                            img_src = img_ref
+                            if isinstance(img_ref, str):
+                                p = PROJECT_ROOT / img_ref if not Path(img_ref).is_absolute() else Path(img_ref)
+                                if p.exists():
+                                    img_src = str(p)
+                            with st.container(border=True):
+                                st.image(img_src, use_container_width=True)
+                                with st.expander(f"🔍 Исходное разрешение фото #{idx+1} (1:1)", expanded=False):
+                                    st.image(img_src, use_container_width=False)
+                    if attached_videos:
+                        for vid_ref in attached_videos:
+                            vid_src = vid_ref
+                            if isinstance(vid_ref, str):
+                                p = PROJECT_ROOT / vid_ref if not Path(vid_ref).is_absolute() else Path(vid_ref)
+                                if p.exists():
+                                    vid_src = str(p)
+                            st.video(vid_src)
+                    render_rich_content(display_text)
 
             with st.chat_message("assistant"):
                 status_placeholder = st.empty()
@@ -1019,7 +1212,7 @@ with tabs[0]:
                         status_placeholder.caption(f"💭 `{model_name}` размышляет над задачей в реальном времени…")
                         with think_placeholder.expander("💭 Размышления модели (в реальном времени)…", expanded=True):
                             st.caption(text_so_far[-3000:])
-                    elif kind == "content":
+                    elif kind in ("content", "token"):
                         status_placeholder.caption(f"✍️ `{model_name}` пишет ответ в реальном времени…")
                         think_placeholder.empty()
                         stream_placeholder.markdown(format_math_markdown(text_so_far) + " ▌")
@@ -1053,7 +1246,7 @@ with tabs[0]:
                     }
                     st.session_state.chat_turns.append(assistant_turn)
                     _save_active_chat_turns()
-                    render_assistant_turn(assistant_turn)
+                    render_assistant_turn(assistant_turn, is_latest=True, turn_idx=len(st.session_state.chat_turns) - 1)
 
 
 # ============================================================ 2. DISPACE НГТУ
