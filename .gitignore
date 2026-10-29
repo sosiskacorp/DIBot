@@ -4,6 +4,7 @@ data/browser_state.json
 data/browser_session_storage.json
 data/gateway_token.txt
 data/gateway_state.json
+data/encrypted_dispace_token.json
 data/bin/
 
 # Вспомогательные директории агентов/IDE

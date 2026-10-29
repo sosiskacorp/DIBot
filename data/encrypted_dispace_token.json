@@ -1,6 +1,0 @@
-{
-  "kdf": "pbkdf2-hmac-sha256-150k",
-  "salt": "AitfkxeSB5lXS+AFLJswoQ==",
-  "ciphertext": "pP6flEZfRVTTALi50fAmpXExWfDgXsBTPCStgoNe7k7J/2KuLPoSelW5YlrcK2GUhFCm8BO3dwCb4vpZ1Z5bA5YYFJ5aFYH2X79uI8Wpk5v3NaYVZZ0sHAmEBhPIJEjdXP0ThHdhsDbdgGJTo+pHoXjTFnk2Vre8k3UwycK4iw4=",
-  "mac": "578fed1568a745c8598063e7b04292972205a319ec7a3d00c7b5d8001959f005"
-}

@@ -35,8 +35,10 @@ import tutor as _tutor_mod  # noqa: E402
 from ingest import extract_docx_bytes, extract_pdf_bytes  # noqa: E402
 
 # Автоперезагрузка модулей, если сервер Streamlit был запущен до обновления кода
-if not hasattr(_materials_mod.MaterialStore, "reload") or not hasattr(
-    _lms_reader_mod.DiSpaceAPI, "import_course_to_store"
+if (
+    not hasattr(_materials_mod.MaterialStore, "reload")
+    or not hasattr(_lms_reader_mod.DiSpaceAPI, "import_course_to_store")
+    or not hasattr(_lms_reader_mod, "authenticate_dispace_input")
 ):
     importlib.reload(_materials_mod)
     importlib.reload(_llm_client_mod)
@@ -52,7 +54,10 @@ from lms_reader import (  # noqa: E402
     MY_COURSES_URL,
     TESTS_URL,
     LoginRequired,
+    authenticate_dispace_input,
     get_api_client,
+    get_keycloak_login_url,
+    login_dispace_direct,
     parse_dispace_target,
 )
 from materials import MaterialStore, slugify  # noqa: E402
@@ -157,14 +162,77 @@ get_tutor.clear = lambda: None  # type: ignore[attr-defined]
 
 
 def get_session_dispace_api(auto_refresh: bool = False):
-    """Получить клиент DiSpace только для авторизованной сессии текущего устройства."""
+    """Получить клиент DiSpace для текущей сессии браузера (независимо от токена локальной модели)."""
     return get_api_client(
         auto_refresh=auto_refresh and IS_LOCAL_PC,
-        gateway_url=st.session_state.get("session_ollama_url", ""),
-        gateway_key=st.session_state.get("session_ollama_key", ""),
         explicit_token=st.session_state.get("session_dispace_token", ""),
         allow_local_files=IS_LOCAL_PC,
     )
+
+
+@st.dialog("🔑 Вход в DiSpace НГТУ через браузер")
+def open_dispace_browser_login_dialog(is_cloud_env: bool) -> None:
+    """Окно авторизации в DiSpace через браузер для любого устройства (облако и локальный ПК)."""
+    sso_url = get_keycloak_login_url()
+
+    tab_sso, tab_direct = st.tabs(
+        ["🌐 Вход через браузер (SSO НГТУ)", "🔐 Вход по логину DiSpace"]
+    )
+
+    with tab_sso:
+        if not is_cloud_env:
+            st.markdown("**Автоматический вход через браузер на этом ПК:**")
+            if st.button("🖥️ Открыть окно браузера и войти автоматически", type="primary", width="stretch"):
+                subprocess.Popen(
+                    [sys.executable, str(PROJECT_ROOT / "src" / "lms_reader.py"), "--login"],
+                    cwd=str(PROJECT_ROOT),
+                )
+                st.info("Открылось окно браузера. Войди в DiSpace, затем нажми «🔄 Обновить сессию».")
+            st.divider()
+
+        st.markdown("**Шаг 1.** Открой страницу единого входа НГТУ в новой вкладке браузера и войди в аккаунт:")
+        st.link_button(
+            "🌐 1. Открыть вход DiSpace НГТУ в браузере",
+            sso_url,
+            type="primary" if is_cloud_env else "secondary",
+            use_container_width=True,
+        )
+
+        st.markdown(
+            "**Шаг 2.** Если ты уже вошёл в DiSpace в браузере, при повторном нажатии кнопки выше в адресной строке "
+            "появится ссылка со строкой `?session_state=...&code=...` — просто скопируй этот URL из адресной строки "
+            "(либо выполни в консоли `F12` на вкладке DiSpace команду `copy(localStorage.authToken)`) и вставь сюда:"
+        )
+        browser_input = st.text_input(
+            "Ссылка после входа в браузере (?code=...) или authToken",
+            placeholder="https://dispace.nstu.ru/?session_state=...&code=... или eyJ...",
+        )
+        if st.button("✅ Завершить вход в этом браузере", type="primary", width="stretch"):
+            with st.spinner("Проверяю сессию в DiSpace НГТУ…"):
+                tok, err = authenticate_dispace_input(browser_input)
+            if tok:
+                st.session_state["session_dispace_token"] = tok
+                st.success("Вход в DiSpace выполнен! Сессия сохранена для этого браузера.")
+                st.rerun()
+            else:
+                st.error(err)
+
+    with tab_direct:
+        st.caption(
+            "Прямой вход через форму DiSpace (`/api/v1/auth/login`). "
+            "Пароль нигде не сохраняется — в сессии текущего браузера хранится только токен."
+        )
+        d_user = st.text_input("Логин / e-mail DiSpace")
+        d_pass = st.text_input("Пароль", type="password")
+        if st.button("Войти в DiSpace", type="primary", width="stretch"):
+            with st.spinner("Выполняю вход в DiSpace…"):
+                tok, err = login_dispace_direct(d_user, d_pass)
+            if tok:
+                st.session_state["session_dispace_token"] = tok
+                st.success("Вход в DiSpace выполнен!")
+                st.rerun()
+            else:
+                st.error(err)
 
 
 def sync_materials() -> MaterialStore:
@@ -303,17 +371,17 @@ with st.sidebar:
         st.metric("Фрагментов", stats["chunks"])
 
     if status["ok"]:
-        conn_label = "Удалённый шлюз RTX 4060" if status.get("is_remote") else "Локальный Ollama"
+        conn_label = "Удалённый локальный Ollama" if status.get("is_remote") else "Локальный Ollama"
         st.success(f"{conn_label}: {len(status['models'])} моделей готово")
     elif st.session_state.get("session_cloud_key"):
         st.success(f"Облачный ИИ: {st.session_state.get('session_cloud_model', 'llama-3.3-70b-versatile')}")
     else:
-        st.warning("🔒 Сессия не авторизована (введи токен доступа ниже)")
+        st.warning("🔒 Локальная модель не подключена (введи токен доступа ниже)")
 
-    with st.expander("🔒 Доступ к своей RTX 4060 (только для этого устройства)", expanded=not status["ok"]):
+    with st.expander("🔒 Подключение к локальной модели (для этого устройства)", expanded=not status["ok"]):
         st.caption(
             "Ключ сохраняется **только в памяти текущей вкладки браузера** (`st.session_state`) "
-            "и недоступен другим посетителям сайта."
+            "и недоступен другим устройствам."
         )
         remote_ollama_url = st.text_input(
             "HTTPS URL шлюза (OLLAMA_BASE_URL)",
@@ -326,20 +394,19 @@ with st.sidebar:
             type="password",
             placeholder="dibot_sk_...",
         )
-        if st.button("Разблокировать на этом устройстве", type="primary", width="stretch"):
+        if st.button("Подключить на этом устройстве", type="primary", width="stretch"):
             st.session_state["session_ollama_url"] = remote_ollama_url.strip().rstrip("/")
             st.session_state["session_ollama_key"] = remote_ollama_key.strip()
             st.rerun()
 
         if st.session_state.get("session_ollama_key") or st.session_state.get("session_cloud_key"):
-            if st.button("🔒 Выйти на этом устройстве", width="stretch"):
+            if st.button("🔒 Отключить модель на этом устройстве", width="stretch"):
                 st.session_state["session_ollama_key"] = ""
                 st.session_state["session_cloud_key"] = ""
-                st.session_state["session_dispace_token"] = ""
                 st.rerun()
 
         st.divider()
-        st.caption("Резервный облачный API (если домашний ПК выключен):")
+        st.caption("Резервный облачный API (если локальный ПК выключен):")
         cloud_key = st.text_input(
             "API-ключ (Groq / OpenRouter)",
             value=st.session_state.get("session_cloud_key", ""),
@@ -367,7 +434,7 @@ with st.sidebar:
     if dispace_api:
         st.success("DiSpace НГТУ: сессия активна")
     else:
-        st.warning("DiSpace НГТУ: нужен вход")
+        st.warning("DiSpace НГТУ: нужен вход через браузер")
 
     st.divider()
     st.markdown("**Параметры чата**")
@@ -550,39 +617,31 @@ with tabs[1]:
     top_c1, top_c2, top_c3 = st.columns([2, 1, 1])
     with top_c1:
         if dispace_api:
-            st.success("✅ Подключено к dispace.nstu.ru (JWT-токен активен)")
+            st.success("✅ Подключено к dispace.nstu.ru (сессия браузера активна)")
         else:
-            st.warning("⚠️ Сессия DiSpace не активна. Синхронизируй с домашним ПК или укажи токен ниже.")
+            st.warning("⚠️ Сессия DiSpace не активна. Нажми «🔑 Войти через браузер» справа.")
     with top_c2:
-        if st.button("🔄 Обновить / синхронизировать токен", width="stretch"):
-            with st.spinner("Получаю токен DiSpace (через шлюз домашнего ПК или SSO)…"):
-                refreshed = get_session_dispace_api(auto_refresh=not _is_cloud_env)
-            if refreshed:
-                st.success("Токен DiSpace успешно синхронизирован!")
+        if dispace_api and st.session_state.get("session_dispace_token"):
+            if st.button("🚪 Выйти из DiSpace", width="stretch"):
+                st.session_state["session_dispace_token"] = ""
                 st.rerun()
-            else:
-                st.warning(
-                    "Для доступа к DiSpace на этом устройстве сначала разблокируй сессию секретным токеном "
-                    "в боковой панели слева (`dibot_sk_...`) или вставь JWT-токен вручную."
-                )
+        else:
+            if st.button("🔄 Обновить сессию", width="stretch"):
+                with st.spinner("Проверяю сессию браузера DiSpace…"):
+                    refreshed = get_session_dispace_api(auto_refresh=not _is_cloud_env)
+                if refreshed:
+                    st.success("Сессия DiSpace активна!")
+                    st.rerun()
+                else:
+                    st.info("Нажми «🔑 Войти через браузер», чтобы авторизоваться в DiSpace НГТУ.")
     with top_c3:
-        if not _is_cloud_env:
-            if st.button("🔑 Войти через браузер", width="stretch"):
+        if st.button("🔑 Войти через браузер", type="primary", width="stretch"):
+            if not _is_cloud_env:
                 subprocess.Popen(
                     [sys.executable, str(PROJECT_ROOT / "src" / "lms_reader.py"), "--login"],
                     cwd=str(PROJECT_ROOT),
                 )
-                st.info("Открылось окно браузера. Войди в DiSpace, затем обнови страницу.")
-        else:
-            with st.popover("🔑 Ввести токен DiSpace", use_container_width=True):
-                manual_jwt = st.text_input(
-                    "JWT-токен (authToken из localStorage DiSpace)",
-                    value=st.session_state.get("session_dispace_token", ""),
-                    type="password",
-                )
-                if st.button("Сохранить в этой сессии", type="primary", width="stretch") and manual_jwt.strip():
-                    st.session_state["session_dispace_token"] = manual_jwt.strip().strip('"')
-                    st.rerun()
+            open_dispace_browser_login_dialog(_is_cloud_env)
 
     dispace_section = st.segmented_control(
         "Раздел DiSpace НГТУ",
@@ -1346,22 +1405,27 @@ with tabs[5]:
             st.caption(f"{'✅' if ok else '⚠️'} решает `{model_name}` → проверяет `{verifier or '—'}`")
 
     with col2:
-        st.markdown("**Аппаратный профиль**")
-        st.caption("RTX 4060 8 ГБ VRAM · 16 ГБ RAM. В VRAM одновременно держится одна 8B/9B-модель.")
+        st.markdown("**Профиль локального сервера Ollama**")
+        if status["ok"]:
+            st.caption(f"Адрес сервера: `{status['base_url']}` · Доступно моделей: **{len(status['models'])}**")
+            if status["models"]:
+                st.caption("Установленные модели: " + ", ".join(f"`{m}`" for m in status["models"][:8]))
+        else:
+            st.caption("Локальный сервер Ollama в текущей сессии не подключён.")
         st.caption(
-            "Контекст зафиксирован на `8192`: при `16384` KV-кэш не помещается в 8 ГБ VRAM, "
-            "часть слоёв выгружается в RAM и скорость падает с ~27 ток/с до ~5.5 ток/с."
+            "Контекст по умолчанию (`num_ctx = 8192`) сбалансирован для видеокарт от 8 ГБ VRAM и CPU/RAM. "
+            "При наличии большего объёма VRAM или других моделей параметры настраиваются в `config/settings.json`."
         )
         if status["loaded"]:
-            st.markdown("**Сейчас загружено в VRAM:**")
+            st.markdown("**Сейчас загружено в память (VRAM / RAM):**")
             for item in status["loaded"]:
                 st.caption(f"• `{item['name']}` · {item['size_gb']} ГБ · {item['processor']}")
 
     st.divider()
-    st.markdown("### 🔒 Безопасный удалённый доступ к локальным моделям (RTX 4060 Gateway)")
+    st.markdown("### 🔒 Безопасный удалённый доступ к локальным моделям (Ollama Gateway)")
     st.caption(
-        "Позволяет подключаться к твоим локальным моделям (`qwen3.5:9b`, `deepseek-r1:8b`, `qwen3-vl:8b`, `qwen2.5-coder:7b`) "
-        "из задеплоенного приложения в Streamlit Cloud, с телефона или ноутбука. "
+        "Позволяет подключаться к локальным моделям Ollama на твоём ПК или сервере "
+        "из задеплоенного приложения в Streamlit Cloud, с телефона или ноутбука — изолированно для каждого устройства. "
         "Вместо прямого открытия порта Ollama используется защищённый прокси-шлюз с 256-битным токеном, "
         "защитой от перебора (rate-limit) и жёсткой блокировкой удаления/скачивания моделей."
     )

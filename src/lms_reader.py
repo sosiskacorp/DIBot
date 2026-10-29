@@ -211,6 +211,115 @@ def _fetch_token_from_remote_gateway(
     return None
 
 
+def get_keycloak_login_url(base_url: str = BASE_URL) -> str:
+    """Получить прямую ссылку для входа в DiSpace НГТУ через браузер (Keycloak SSO)."""
+    try:
+        resp = requests.post(
+            f"{base_url.rstrip('/')}/api/v1/auth/keycloak_login",
+            json={"login": "keycloak", "password": "auth"},
+            timeout=6,
+        )
+        if resp.ok:
+            url = str((resp.json() or {}).get("url") or "").strip()
+            if url:
+                return url
+    except requests.RequestException:
+        pass
+    return (
+        "https://login2.nstu.ru/realms/master/protocol/openid-connect/auth"
+        "?response_type=code&client_id=dispace3-client"
+        "&redirect_uri=https%3A%2F%2Fdispace.nstu.ru%2F&scope=openid+profile+email"
+    )
+
+
+def authenticate_dispace_input(raw_input: str, base_url: str = BASE_URL) -> tuple[str | None, str]:
+    """Авторизовать браузерную сессию DiSpace по URL редиректа (?code=...), коду SSO или токену authToken.
+
+    Возвращает (jwt_token, сообщение_об_ошибке).
+    """
+    cleaned = (raw_input or "").strip().strip('"').strip("'")
+    if not cleaned:
+        return None, "Пустая строка. Вставь ссылку после входа в браузере или authToken."
+
+    base = base_url.rstrip("/")
+
+    # 1. Если вставили полный URL редиректа (например https://dispace.nstu.ru/?session_state=...&code=...)
+    code_val: str | None = None
+    auth_token_param: str | None = None
+    if cleaned.startswith("http://") or cleaned.startswith("https://") or "code=" in cleaned or "authToken=" in cleaned:
+        parsed = urlparse(cleaned if "://" in cleaned else f"https://dispace.nstu.ru/?{cleaned.lstrip('?')}")
+        qs = parse_qs(parsed.query)
+        if "code" in qs and qs["code"]:
+            code_val = qs["code"][0].strip()
+        if "authToken" in qs and qs["authToken"]:
+            auth_token_param = qs["authToken"][0].strip()
+
+    # Если вставили сам одноразовый код Keycloak (три UUID через точку)
+    if not code_val and not cleaned.startswith("eyJ") and re.match(r"^[0-9a-fA-F-]{20,}\.[0-9a-zA-Z_-]+\.[0-9a-fA-F-]{20,}$", cleaned):
+        code_val = cleaned
+
+    if code_val:
+        try:
+            resp = requests.post(
+                f"{base}/api/v1/auth/keycloak_auth",
+                json={"code": code_val},
+                timeout=12,
+            )
+            data = resp.json() if resp.content else {}
+            if resp.ok and data.get("token"):
+                tok = str(data["token"]).strip().strip('"')
+                if DiSpaceAPI(tok, base_url=base).verify_token():
+                    return tok, ""
+            msg = str(data.get("message") or f"Код ответа {resp.status_code}")
+            return None, f"Не удалось обменять код входа НГТУ: {msg}"
+        except Exception as exc:
+            return None, f"Ошибка соединения с DiSpace при обмене кода: {exc}"
+
+    if auth_token_param:
+        try:
+            resp = requests.post(
+                f"{base}/api/v1/auth/login_by_token",
+                json={"token": auth_token_param},
+                timeout=10,
+            )
+            data = resp.json() if resp.content else {}
+            tok = str(data.get("token") or auth_token_param).strip().strip('"')
+            if DiSpaceAPI(tok, base_url=base).verify_token():
+                return tok, ""
+        except Exception:
+            pass
+
+    # 2. Если вставили JWT-токен (начинается с eyJ...) из localStorage браузера
+    if DiSpaceAPI(cleaned, base_url=base).verify_token():
+        return cleaned, ""
+
+    return None, "Токен или ссылка недействительны (либо срок сессии истёк)."
+
+
+def login_dispace_direct(username: str, password: str, base_url: str = BASE_URL) -> tuple[str | None, str]:
+    """Вход через стандартный эндпоинт DiSpace (/api/v1/auth/login). Пароль нигде не сохраняется."""
+    u = (username or "").strip()
+    p = password or ""
+    if not u or not p:
+        return None, "Укажи логин и пароль."
+    base = base_url.rstrip("/")
+    try:
+        resp = requests.post(
+            f"{base}/api/v1/auth/login",
+            json={"username": u, "password": p},
+            timeout=12,
+        )
+        data = resp.json() if resp.content else {}
+        if resp.ok and data.get("token"):
+            tok = str(data["token"]).strip().strip('"')
+            if DiSpaceAPI(tok, base_url=base).verify_token():
+                return tok, ""
+        msg = str(data.get("message") or "Неверный логин или пароль (для единой учётной записи НГТУ используй вход через браузер SSO).")
+        return None, msg
+    except Exception as exc:
+        return None, f"Ошибка подключения к DiSpace: {exc}"
+
+
 def load_auth_token(
     state_file: Path = DEFAULT_STATE,
     *,
@@ -219,7 +328,7 @@ def load_auth_token(
     explicit_token: str | None = None,
     allow_local_files: bool = True,
 ) -> str | None:
-    """Извлечь JWT-токен DiSpace изолированно для текущей сессии (без глобальной утечки в os.environ)."""
+    """Извлечь JWT-токен DiSpace изолированно для текущей сессии (независимо от токена локальной модели)."""
     if explicit_token and explicit_token.strip():
         return explicit_token.strip().strip('"')
 
@@ -237,30 +346,16 @@ def load_auth_token(
                         try:
                             parsed = json.loads(raw_val)
                             if parsed:
-                                tok_str = str(parsed)
-                                save_encrypted_dispace_token(tok_str)
-                                return tok_str
+                                return str(parsed)
                         except json.JSONDecodeError:
-                            tok_str = str(raw_val).strip('"')
-                            save_encrypted_dispace_token(tok_str)
-                            return tok_str
+                            return str(raw_val).strip('"')
         except (OSError, json.JSONDecodeError):
             pass
-
-    if gateway_key:
-        dec_tok = load_encrypted_dispace_token(gateway_key=gateway_key)
-        if dec_tok:
-            return dec_tok
-        return _fetch_token_from_remote_gateway(gateway_url=gateway_url, gateway_key=gateway_key)
 
     if allow_local_files:
         env_tok = os.environ.get("DISPACE_AUTH_TOKEN", "").strip().strip('"')
         if env_tok:
             return env_tok
-        dec_tok = load_encrypted_dispace_token()
-        if dec_tok:
-            return dec_tok
-        return _fetch_token_from_remote_gateway()
 
     return None
 
@@ -1080,6 +1175,7 @@ class Reader:
         """Если URL содержит ?code=... или session_state=..., дождаться обмена кода на JWT."""
         deadline = time.time() + timeout
         saw_callback = False
+        code_seen_at: float | None = None
         while time.time() < deadline:
             try:
                 cur_url = self.page.url
@@ -1089,6 +1185,21 @@ class Reader:
             qs = parse_qs(parsed.query)
             if "dispace.nstu.ru" in parsed.netloc.lower() and ("code" in qs or "session_state" in qs):
                 saw_callback = True
+                if code_seen_at is None:
+                    code_seen_at = time.time()
+                elif time.time() - code_seen_at >= 2.5 and "code" in qs and qs["code"]:
+                    # Если SPA не обменяла code сама (из-за старого токена в localStorage), обменяем напрямую
+                    new_tok, _ = authenticate_dispace_input(cur_url)
+                    if new_tok:
+                        try:
+                            self.page.evaluate(
+                                "(tok) => { localStorage.setItem('authToken', tok); }",
+                                new_tok,
+                            )
+                            self.save_state()
+                        except Exception:
+                            pass
+                        break
                 time.sleep(1.0)
                 continue
             if saw_callback:
