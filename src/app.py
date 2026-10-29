@@ -101,7 +101,7 @@ from lms_reader import (  # noqa: E402
 )
 from materials import MaterialStore, slugify  # noqa: E402
 from notes import NoteBuilder  # noqa: E402
-from tutor import Answer, Tutor  # noqa: E402
+from tutor import Answer, Tutor, extract_dispace_input, format_dispace_input  # noqa: E402
 from llm_client import CLOUD_PROVIDERS, fetch_cloud_models  # noqa: E402
 
 st.set_page_config(
@@ -434,6 +434,7 @@ def _serialize_chat_sessions(sessions: list[dict[str, Any]]) -> list[dict[str, A
                             "sources": ans_obj.sources,
                             "context_used": ans_obj.context_used,
                             "thinking": ans_obj.thinking,
+                            "dispace_input": getattr(ans_obj, "dispace_input", ""),
                         }
                         if ans_obj
                         else t.get("meta")
@@ -655,6 +656,10 @@ def render_assistant_turn(turn: dict[str, Any], is_latest: bool = False, turn_id
             with st.expander("💭 Ход рассуждений модели", expanded=False):
                 st.caption(meta["thinking"])
         render_rich_content(turn.get("content", ""))
+        disp_val = meta.get("dispace_input") or extract_dispace_input(turn.get("content", ""))
+        if disp_val:
+            st.markdown("🎯 **Строка для поля ввода DiSpace:**")
+            st.code(disp_val, language="text")
         if meta.get("model"):
             badges = [
                 f"модель: `{meta.get('model')}`",
@@ -685,6 +690,11 @@ def render_assistant_turn(turn: dict[str, Any], is_latest: bool = False, turn_id
             st.caption(ans.thinking)
 
     render_rich_content(ans.text)
+
+    disp_val = getattr(ans, "dispace_input", "") or extract_dispace_input(ans.text)
+    if disp_val:
+        st.markdown("🎯 **Строка для поля ввода DiSpace:**")
+        st.code(disp_val, language="text")
 
     badges = [
         f"модель: `{ans.model}`",
@@ -1738,12 +1748,29 @@ with tabs[1]:
                                                     placeholder="Введи свой ответ (например: -1/2 или 18*x^(3)), чтобы бот проверил его…",
                                                     key=f"try_input_{active_tid}_{b_id}",
                                                 )
+                                                if student_try.strip():
+                                                    formatted_try = format_dispace_input(student_try)
+                                                    if formatted_try and formatted_try != student_try.strip():
+                                                        st.info(f"💡 **Подсказка DiSpace:** без пробелов: `{formatted_try}`")
                                             with sol_c2:
                                                 st.write("")
                                                 btn_check_own = st.button(
                                                     "🔍 Проверить мой ответ",
                                                     key=f"btn_chk_{active_tid}_{b_id}",
                                                     width="stretch",
+                                                )
+
+                                            with st.expander("ℹ️ Официальные правила ввода ответов в DiSpace НГТУ (шпаргалка)", expanded=False):
+                                                st.markdown(
+                                                    """**Официальные правила оформления ответов в системе DiSpace НГТУ:**\n\n"""
+                                                    """- 🚫 **БЕЗ ПРОБЕЛОВ**: в строке ответа категорически запрещены пробелы (например: `12+2/x^(2)`, а не `12 + 2/x^2`). Любые пробелы ломают синтаксический анализатор!\n"""
+                                                    """- 🔢 **Константы**: $\\pi$ записывается как `pi`, $\\infty$ — как `inf` (или русской буквой `б`), экспонента — латинская `e` или `exp`.\n"""
+                                                    """- 📐 **Функции**: имена латиницей, аргументы **ВСЕГДА в круглых скобках**: `sin(2)`, `cos(pi)`, `ln(1/x)`, `tg(x)`.\n"""
+                                                    """- ✖️ **Умножение**: знаки арифметических операций не пропускаются, произведение **ВСЕГДА пишется `*`**: `sin(2*x)`, `cos(pi*x)`, `3*tg(2*pi*x)`, `2*x`.\n"""
+                                                    """- 📈 **Степени и индексы**: степень через `^`, индекс через `_`. Значения показателей и индексов **ВСЕГДА пишутся в скобках**: `2^(3)`, `e^(-2*x)`, `a_(1)`. Если основание степени состоит более чем из одного знака, его также следует взять в скобки: `(35)^(6)`, `(x+1)^(2)`. Порядок написания индекса и степени не важен: `x^(2)_(1)` или `x_(1)^(2)`.\n"""
+                                                    """- ➗ **Дроби**: пишутся через `/`. Если числитель или знаменатель состоит более чем из одного символа, их следует записывать в скобках: `2/3`, `(12)/(17)`, `2/(3*x)`, `(x^(2)+1)/4`, `(x+3*x^(2))/(x^(2)-1)`, `2^(2/3)`. *(Обратите внимание: выражения `2/(3*x)` и `2/3*x` разные!)*.\n"""
+                                                    """- 🌿 **Корни**: функция `sqrt[]()` — в квадратных скобках степень корня, в круглых подкоренное выражение: `sqrt(3)`, `sqrt[3](x)`, `sqrt[4](x^(2)+1)`. Либо через степень с дробным показателем: `3^(1/2)`, `(pi)^(1/4)`, `(x^(2)-pi)^(1/3)`.\n"""
+                                                    """- 🧮 **Интегралы**: `int(2*x*dx)` или с пределами `int_(2)^(3)((2*x-1)/4*dx)`."""
                                                 )
 
                                             btn_notebook = st.button(
