@@ -13,12 +13,11 @@
   6. ⚙️ Модели — мониторинг Ollama, маршрутизация задач и диагностика.
 """
 
-from __future__ import annotations
-
 import importlib
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -26,26 +25,39 @@ import requests
 import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_SRC_DIR = str(Path(__file__).resolve().parent)
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
 
-import ingest as _ingest_mod  # noqa: E402
-import llm_client as _llm_client_mod  # noqa: E402
-import lms_reader as _lms_reader_mod  # noqa: E402
-import materials as _materials_mod  # noqa: E402
-import tutor as _tutor_mod  # noqa: E402
+if not hasattr(sys, "_dibot_import_lock"):
+    sys._dibot_import_lock = threading.Lock()  # type: ignore[attr-defined]
 
-# Автоперезагрузка модулей, если сервер Streamlit был запущен до обновления кода
-if (
-    not hasattr(_materials_mod.MaterialStore, "reload")
-    or not hasattr(_lms_reader_mod.DiSpaceAPI, "import_course_to_store")
-    or not hasattr(_lms_reader_mod, "authenticate_dispace_input")
-    or not hasattr(_ingest_mod, "decode_bytes_smart")
-):
-    importlib.reload(_ingest_mod)
-    importlib.reload(_materials_mod)
-    importlib.reload(_llm_client_mod)
-    importlib.reload(_lms_reader_mod)
-    importlib.reload(_tutor_mod)
+with sys._dibot_import_lock:  # type: ignore[attr-defined]
+    import materials as _materials_mod  # noqa: E402
+    import llm_client as _llm_client_mod  # noqa: E402
+    import notes as _notes_mod  # noqa: E402
+    import ingest as _ingest_mod  # noqa: E402
+    import verification as _verification_mod  # noqa: E402
+    import lms_reader as _lms_reader_mod  # noqa: E402
+    import tutor as _tutor_mod  # noqa: E402
+
+    if (
+        not hasattr(_materials_mod.MaterialStore, "reload")
+        or not hasattr(_ingest_mod, "decode_bytes_smart")
+        or not hasattr(_lms_reader_mod, "authenticate_dispace_input")
+        or not hasattr(_tutor_mod, "_is_meta_or_conversational")
+    ):
+        for _mod in (
+            _materials_mod,
+            _llm_client_mod,
+            _notes_mod,
+            _ingest_mod,
+            _verification_mod,
+            _lms_reader_mod,
+            _tutor_mod,
+        ):
+            sys.modules[_mod.__name__] = _mod
+            importlib.reload(_mod)
 
 from ingest import (  # noqa: E402
     decode_bytes_smart,
@@ -54,7 +66,6 @@ from ingest import (  # noqa: E402
     format_math_markdown,
     html_to_text,
 )
-
 from llm_client import LLMClient, LLMError  # noqa: E402
 from lms_reader import (  # noqa: E402
     CATALOG_URL,

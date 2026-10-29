@@ -13,8 +13,6 @@
     print(llm.generate("Найди предел lim x->0 sin(x)/x", task="math"))
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import logging

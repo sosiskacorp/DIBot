@@ -7,8 +7,6 @@
   * в ответе всегда видно, какая модель отвечала и чем проверено.
 """
 
-from __future__ import annotations
-
 import json
 import re
 import time

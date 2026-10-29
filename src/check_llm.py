@@ -6,8 +6,6 @@
     python src/check_llm.py --task math --prompt "lim x->0 sin(x)/x"
 """
 
-from __future__ import annotations
-
 import argparse
 import sys
 import time

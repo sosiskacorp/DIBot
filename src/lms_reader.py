@@ -21,8 +21,6 @@
     python src/lms_reader.py --import-course 3095 --course "Линейная алгебра"
 """
 
-from __future__ import annotations
-
 import argparse
 import base64
 import datetime as dt

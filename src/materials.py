@@ -10,8 +10,6 @@
 Хранилище: data/materials/{index.json, sources/, notes/}
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import math

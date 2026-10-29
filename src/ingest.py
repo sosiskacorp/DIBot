@@ -9,8 +9,6 @@
 строится конспект со ссылками на фрагменты.
 """
 
-from __future__ import annotations
-
 import argparse
 import html
 import io

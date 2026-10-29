@@ -5,8 +5,6 @@ SearXNG отдаёт JSON только если в его settings.yml вклю�
 клиент честно переключается на резерв и сообщает, чем отвечал.
 """
 
-from __future__ import annotations
-
 import html
 import json
 import time

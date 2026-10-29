@@ -16,8 +16,6 @@
     verify   — критика чужого ответа (должна идти на другой модели)
 """
 
-from __future__ import annotations
-
 import json
 import re
 from dataclasses import dataclass
