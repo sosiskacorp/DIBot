@@ -181,6 +181,15 @@ def _init_session_credentials() -> None:
 
 _init_session_credentials()
 
+# Автоматическая периодическая проверка и очистка кэша/мусора при старте сессии
+if "autoclean_checked" not in st.session_state:
+    st.session_state["autoclean_checked"] = True
+    try:
+        from cleaner import auto_clean_if_needed
+        auto_clean_if_needed(PROJECT_ROOT)
+    except Exception:
+        pass
+
 
 @st.cache_resource(show_spinner=False)
 def get_store() -> MaterialStore:
@@ -927,6 +936,42 @@ with st.sidebar:
         st.success(f"DiSpace НГТУ: вы вошли (ID `{_current_user['id'] if _current_user else '—'}`)")
     else:
         st.warning("👤 Гостевой режим: войдите в DiSpace, чтобы пользоваться моделями и сохранять историю чатов")
+
+    with st.expander("🧹 Кэш, память и мусор", expanded=False):
+        st.caption("Быстрая очистка временных файлов и управление памятью:")
+        try:
+            from cleaner import get_storage_stats, clean_garbage, unload_ollama_vram, format_bytes
+
+            c_stats = get_storage_stats(PROJECT_ROOT)
+            b_sz = c_stats["browser_cache"].formatted_size
+            u_sz = c_stats["chat_uploads"].formatted_size
+            v_sz = c_stats["vram"].formatted_size
+
+            st.caption(f"🌐 Кэш DiSpace: **{b_sz}** · 📂 Загрузки: **{u_sz}**")
+            if c_stats["vram"].file_count > 0:
+                st.caption(f"⚡ VRAM GPU: **{v_sz}** ({c_stats['vram'].file_count} мод.)")
+
+            sb_c1, sb_c2 = st.columns(2)
+            with sb_c1:
+                if st.button("🧹 Стереть кэш", width="stretch", help="Безопасно удалить кэш страниц Chromium, pycache и логи без сброса авторизации"):
+                    res = clean_garbage(categories=["browser_cache", "python_cache", "logs"], max_age_days=0.0)
+                    st.toast(f"Освобождено {res.formatted_freed}!")
+                    st.rerun()
+            with sb_c2:
+                if st.button("⚡ Сброс VRAM", width="stretch", help="Выгрузить неактивные модели из видеопамяти GPU"):
+                    unloaded = unload_ollama_vram()
+                    if unloaded:
+                        st.toast(f"Выгружено: {', '.join(unloaded)}")
+                    else:
+                        st.toast("Видеопамять уже свободна")
+                    st.rerun()
+
+            if st.button("🗑️ Удалить файлы старше 7 дней", width="stretch", help="Очистить весь временный кэш и старые загрузки чата"):
+                res = clean_garbage(max_age_days=7.0, preserve_active_chat_uploads=True)
+                st.toast(f"Очищено {res.formatted_freed} ({res.files_deleted} файлов)!")
+                st.rerun()
+        except Exception as exc:
+            st.caption(f"Ошибка проверки кэша: {exc}")
 
     st.divider()
     st.markdown("**Параметры чата**")
@@ -2751,3 +2796,108 @@ with tabs[5]:
         with st.spinner("Проверяю доступность всех моделей…"):
             report = llm.health()
         st.code(report.as_text())
+
+    st.divider()
+    st.markdown("### 🧹 Очистка кэша, мусора и управление диском")
+    st.caption(
+        "DIBot автоматически отслеживает размер временного кэша и выполняет очистку каждые 6 часов "
+        "или при превышении 120 МБ. Вы также можете выполнить детальную выборочную или полную очистку в любое время."
+    )
+
+    try:
+        from cleaner import (
+            get_storage_stats,
+            clean_garbage,
+            auto_clean_if_needed,
+            unload_ollama_vram,
+            format_bytes,
+        )
+
+        c_stats = get_storage_stats(PROJECT_ROOT)
+        marker_file = PROJECT_ROOT / "data" / ".last_autoclean"
+        last_autoclean_str = "ещё не проводилась"
+        if marker_file.exists():
+            try:
+                ts = float(marker_file.read_text(encoding="utf-8").strip())
+                last_autoclean_str = datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M:%S")
+            except Exception:
+                pass
+
+        total_disk = sum(c.size_bytes for k, c in c_stats.items() if k != "vram")
+
+        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+        with m_col1:
+            st.metric("Кэш браузера DiSpace", c_stats["browser_cache"].formatted_size, f"{c_stats['browser_cache'].file_count} файлов")
+        with m_col2:
+            st.metric("Загрузки в чате", c_stats["chat_uploads"].formatted_size, f"{c_stats['chat_uploads'].file_count} файлов")
+        with m_col3:
+            st.metric("Байт-код и логи", format_bytes(c_stats["python_cache"].size_bytes + c_stats["logs"].size_bytes))
+        with m_col4:
+            st.metric("Всего дискового кэша", format_bytes(total_disk))
+
+        st.info(f"🤖 **Автоматическая фоновая очистка:** активна (порог: 120 МБ / 6 часов) · Последняя автоочистка: **{last_autoclean_str}**")
+
+        with st.expander("🛠️ Ручная выборочная очистка кэша и данных", expanded=True):
+            st.markdown("**Выберите компоненты для очистки:**")
+            sel_c1, sel_c2, sel_c3 = st.columns(3)
+            with sel_c1:
+                chk_browser = st.checkbox("🌐 Кэш Chromium (DiSpace)", value=True, help="Сетевой кэш страниц, картинок и стилей. Авторизация сохраняется!")
+                chk_pycache = st.checkbox("🐍 Байт-код Python (.pyc)", value=True, help="Временные файлы компиляции Python скриптов")
+            with sel_c2:
+                chk_uploads = st.checkbox("📁 Старые загрузки чата", value=False, help="Удалить прикреплённые изображения и файлы, которые не используются в активных чатах")
+                chk_logs = st.checkbox("📄 Файлы журналов (logs)", value=True, help="Лог-файлы работы сервисов")
+            with sel_c3:
+                chk_vram = st.checkbox("⚡ Выгрузить VRAM GPU", value=False, help="Освободить память видеокарты, выгрузив простаивающие модели Ollama")
+                chk_st_cache = st.checkbox("🔄 Кэш Streamlit", value=False, help="Сбросить кэш сессии и данных Streamlit в оперативной памяти")
+
+            age_mode = st.radio(
+                "Глубина очистки файлов:",
+                ["⚡ Удалить весь временный кэш (рекомендуется)", "⏳ Удалять только файлы старше 7 дней"],
+                index=0,
+                horizontal=True,
+            )
+            target_days = 7.0 if age_mode.startswith("⏳") else 0.0
+
+            btn_col1, btn_col2 = st.columns([2, 1])
+            with btn_col1:
+                if st.button("🧹 Выполнить очистку выбранного", type="primary", width="stretch"):
+                    cats = []
+                    if chk_browser:
+                        cats.append("browser_cache")
+                    if chk_uploads:
+                        cats.append("chat_uploads")
+                    if chk_pycache:
+                        cats.append("python_cache")
+                    if chk_logs:
+                        cats.append("logs")
+                    if chk_vram:
+                        cats.append("vram")
+
+                    if chk_st_cache:
+                        st.cache_data.clear()
+                        st.cache_resource.clear()
+
+                    res = clean_garbage(
+                        categories=cats,
+                        max_age_days=target_days,
+                        unload_vram=chk_vram,
+                        preserve_active_chat_uploads=True,
+                    )
+                    st.success(
+                        f"✅ Очистка завершена! Освобождено диска: **{res.formatted_freed}** "
+                        f"(удалено файлов: {res.files_deleted})"
+                    )
+                    if res.vram_models_unloaded:
+                        st.info(f"⚡ Модели выгружены из VRAM: {', '.join(res.vram_models_unloaded)}")
+                    st.rerun()
+
+            with btn_col2:
+                if st.button("⚡ Проверить автоочистку", width="stretch", help="Запустить проверку порогов автоочистки прямо сейчас"):
+                    auto_res = auto_clean_if_needed(PROJECT_ROOT, max_browser_cache_mb=0.0)
+                    if auto_res and auto_res.bytes_freed > 0:
+                        st.success(f"Автоочистка сработала: освобождено {auto_res.formatted_freed}!")
+                    else:
+                        st.info("Автоочистка проверена: всё чисто.")
+                    st.rerun()
+    except Exception as exc:
+        st.error(f"Ошибка модуля очистки: {exc}")

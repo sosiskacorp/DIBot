@@ -354,12 +354,61 @@ def start_dibot(*, port: int = DEFAULT_PORT, with_tunnel: bool = False) -> None:
                 pass
 
 
+def check_and_autoclean() -> None:
+    """Фоновая проверка и быстрая автоочистка мусора."""
+    try:
+        sys.path.insert(0, str(SRC_DIR))
+        from cleaner import auto_clean_if_needed
+
+        res = auto_clean_if_needed(PROJECT_ROOT)
+        if res and res.bytes_freed > 0:
+            print(f"  ✓ Автоочистка: удалено {res.files_deleted} устаревших файлов ({res.formatted_freed}).")
+    except Exception:
+        pass
+
+
+def run_clean_interactive() -> None:
+    """Интерактивная очистка кэша и памяти из меню лаунчера."""
+    sys.path.insert(0, str(SRC_DIR))
+    from cleaner import get_storage_stats, clean_garbage, unload_ollama_vram, format_bytes
+
+    print("\n" + "=" * 60)
+    print("   🧹 Очистка кэша, мусора и памяти DIBot")
+    print("=" * 60)
+    stats = get_storage_stats(PROJECT_ROOT)
+    for cat in stats.values():
+        print(f"  • {cat.title}: {cat.formatted_size} ({cat.file_count} файлов/объектов)")
+    print("-" * 60)
+    print("  [1] 🧹 Быстрая очистка (кэш страниц браузера, pycache, логи) [Enter]")
+    print("  [2] ⚡ Освободить видеопамять (выгрузить модели из VRAM GPU)")
+    print("  [3] 🗑️ Глубокая очистка (файлы и загрузки старше 7 дней)")
+    print("  [0] Назад в меню")
+
+    choice = input("\nВыберите действие [по умолчанию 1]: ").strip()
+    if choice in ("0", "q", "exit"):
+        return
+    if choice == "2":
+        unloaded = unload_ollama_vram()
+        if unloaded:
+            print(f"  ✓ Модели выгружены из VRAM: {', '.join(unloaded)}")
+        else:
+            print("  ✓ Видеопамять уже свободна.")
+    elif choice == "3":
+        res = clean_garbage(max_age_days=7.0, unload_vram=False, preserve_active_chat_uploads=True)
+        print(f"  ✓ Очищено {res.formatted_freed} (удалено {res.files_deleted} файлов).")
+    else:
+        res = clean_garbage(categories=["browser_cache", "python_cache", "logs"], max_age_days=0.0)
+        print(f"  ✓ Очищено {res.formatted_freed} (удалено {res.files_deleted} файлов).")
+    input("\nНажмите Enter, чтобы продолжить...")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Умный лаунчер DIBot")
     parser.add_argument("-q", "--quick", action="store_true", help="Быстрый запуск без отображения меню")
     parser.add_argument("-t", "--tunnel", action="store_true", help="Запуск вместе с защищённым HTTPS-туннелем")
     parser.add_argument("-s", "--shortcut", action="store_true", help="Создать ярлык на Рабочем столе и выйти")
     parser.add_argument("--health", action="store_true", help="Выполнить полную диагностику системы")
+    parser.add_argument("--clean", action="store_true", help="Очистить временный кэш, мусор и выйти")
     parser.add_argument("-p", "--port", type=int, default=DEFAULT_PORT, help="Порт для Streamlit (по умолч. 8501)")
     args = parser.parse_args()
 
@@ -369,11 +418,20 @@ def main() -> None:
         create_desktop_shortcut()
         return
 
+    if args.clean:
+        sys.path.insert(0, str(SRC_DIR))
+        from cleaner import clean_garbage
+
+        res = clean_garbage(categories=["browser_cache", "python_cache", "logs"], max_age_days=0.0)
+        print(f"✓ Кэш очищен: освобождено {res.formatted_freed} (удалено {res.files_deleted} файлов).")
+        return
+
     # Базовая валидация среды
     check_python_environment()
     ensure_ollama_running()
     check_models_status()
     check_materials_and_dispace()
+    check_and_autoclean()
 
     if args.health:
         run_health_check()
@@ -391,6 +449,7 @@ def main() -> None:
     print("  [3] 📦 Проверить и докачать модели нейросетей (Ollama pull)")
     print("  [4] 🖥️ Создать удобный ярлык на Рабочем столе Windows")
     print("  [5] 🛠️ Диагностика системы (Health Check)")
+    print("  [6] 🧹 Очистить временный кэш, мусор и память VRAM")
     print("  [0] ❌ Выход")
     print("-" * 60)
 
@@ -412,6 +471,9 @@ def main() -> None:
         start_dibot(port=args.port, with_tunnel=False)
     elif user_choice == "5":
         run_health_check()
+    elif user_choice == "6":
+        run_clean_interactive()
+        main()
     elif user_choice == "0":
         print("До встречи!")
     else:

@@ -129,5 +129,13 @@
   },
 
   "browser_headless": true,
-  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+
+  "housekeeping": {
+    "auto_clean_enabled": true,
+    "interval_hours": 6,
+    "max_browser_cache_mb": 120,
+    "max_uploads_age_days": 14,
+    "max_logs_age_days": 7
+  }
 }

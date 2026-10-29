@@ -40,3 +40,6 @@ Thumbs.db
 # chat history (per user)
 data/chat_history/
 data/chat_sessions.json
+
+data/chat_uploads/
+data/.last_autoclean
