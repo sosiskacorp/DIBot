@@ -717,6 +717,7 @@ class LLMClient:
         if "openrouter" in self.cloud_base_url.lower():
             headers["HTTP-Referer"] = "https://github.com/sosiskacorp/DIBot"
             headers["X-Title"] = "DIBot Education Assistant"
+            headers["X-OpenRouter-Title"] = "DIBot Education Assistant"
 
         started = time.perf_counter()
 
@@ -740,11 +741,12 @@ class LLMClient:
             choice = (data.get("choices") or [{}])[0]
             msg_obj = choice.get("message") or {}
             usage = data.get("usage") or {}
+            msg_reasoning = msg_obj.get("reasoning_content") or msg_obj.get("reasoning") or ""
             return ChatResult(
                 text=(msg_obj.get("content") or "").strip(),
                 model=f"cloud:{data.get('model') or model_name}",
                 task=task,
-                thinking=(msg_obj.get("reasoning_content") or "").strip(),
+                thinking=str(msg_reasoning).strip(),
                 prompt_tokens=int(usage.get("prompt_tokens") or 0),
                 output_tokens=int(usage.get("completion_tokens") or 0),
                 seconds=round(elapsed, 3),
@@ -799,9 +801,9 @@ class LLMClient:
             if choice.get("finish_reason"):
                 done_reason = choice["finish_reason"]
 
-            delta_reasoning = delta.get("reasoning_content") or ""
+            delta_reasoning = delta.get("reasoning_content") or delta.get("reasoning") or ""
             if delta_reasoning:
-                thinking_parts.append(delta_reasoning)
+                thinking_parts.append(str(delta_reasoning))
                 if on_stream:
                     try:
                         on_stream("thinking", "".join(thinking_parts), display_model)
