@@ -86,41 +86,50 @@ class HealthReport:
 
 CLOUD_PROVIDERS: dict[str, dict[str, Any]] = {
     "groq": {
-        "name": "⚡ Groq (бесплатно, мгновенный стриминг)",
+        "name": "⚡ Groq (бесплатно, сверхбыстро ~500 tps)",
         "base_url": "https://api.groq.com/openai/v1",
         "models": [
             "llama-3.3-70b-versatile",
             "llama-3.1-8b-instant",
-            "mixtral-8x7b-32768",
-            "gemma2-9b-it",
-            "deepseek-r1-distill-llama-70b",
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "qwen/qwen3.8-27b",
+            "minimaxai/minimax-m2.7",
+            "meta-models/muse-spark-open",
         ],
         "default_model": "llama-3.3-70b-versatile",
         "key_url": "https://console.groq.com/keys",
     },
+    "openrouter": {
+        "name": "🌐 OpenRouter (400+ моделей, фильтр :free)",
+        "base_url": "https://openrouter.ai/api/v1",
+        "models": [
+            "openrouter/free",
+            "google/gemma-4-31b-it:free",
+            "google/gemma-4-26b-a4b-it:free",
+            "nvidia/nemotron-3.5-super-vl:free",
+            "nvidia/nemotron-3.5-lightning:free",
+            "poolside/laguna-s-2.1:free",
+            "cohere/north-mini-code:free",
+            "dots-studio/dots-3-note-preview:free",
+            "liquid/lfm-2.5-2.6b:free",
+            "thinkingmachines/inkling:free",
+            "recursive/flint-v1.0:free",
+        ],
+        "default_model": "openrouter/free",
+        "key_url": "https://openrouter.ai/keys",
+    },
     "gemini": {
-        "name": "✨ Google Gemini API (бесплатный тариф)",
+        "name": "✨ Google Gemini API (бесплатный тариф AI Studio)",
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
         "models": [
             "gemini-2.0-flash",
             "gemini-1.5-flash",
             "gemini-2.0-flash-lite",
+            "gemini-flash-latest",
         ],
         "default_model": "gemini-2.0-flash",
-        "key_url": "https://aistudio.google.com/app/apikey",
-    },
-    "openrouter": {
-        "name": "🌐 OpenRouter (бесплатные модели :free)",
-        "base_url": "https://openrouter.ai/api/v1",
-        "models": [
-            "deepseek/deepseek-r1:free",
-            "meta-llama/llama-3.3-70b-instruct:free",
-            "google/gemini-2.0-flash-exp:free",
-            "qwen/qwen-2.5-72b-instruct:free",
-            "mistralai/mistral-7b-instruct:free",
-        ],
-        "default_model": "deepseek/deepseek-r1:free",
-        "key_url": "https://openrouter.ai/keys",
+        "key_url": "https://aistudio.google.com/apikey",
     },
     "openai": {
         "name": "🤖 OpenAI (официальный ChatGPT / GPT-4o)",
@@ -143,34 +152,60 @@ CLOUD_PROVIDERS: dict[str, dict[str, Any]] = {
 }
 
 
-def fetch_cloud_models(base_url: str, api_key: str, timeout: float = 5.0) -> list[str]:
-    """Запросить реальный актуальный список моделей с сервера провайдера по API-ключу."""
-    if not base_url or not api_key:
+def fetch_cloud_models(base_url: str, api_key: str = "", timeout: float = 6.0) -> list[str]:
+    """Запросить реальный актуальный список моделей с сервера провайдера."""
+    clean_url = (base_url or "").strip().rstrip("/")
+    if not clean_url:
         return []
-    clean_url = base_url.strip().rstrip("/")
-    endpoint = f"{clean_url}/models"
+
     headers = {
-        "Authorization": f"Bearer {api_key.strip()}",
         "Content-Type": "application/json",
     }
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key.strip()}"
+        headers["x-goog-api-key"] = api_key.strip()
+
     if "openrouter" in clean_url.lower():
         headers["HTTP-Referer"] = "https://github.com/sosiskacorp/DIBot"
         headers["X-Title"] = "DIBot Education Assistant"
+        endpoint = f"{clean_url}/models"
+        try:
+            resp = requests.get(endpoint, headers=headers, timeout=timeout)
+            if resp.ok:
+                items = resp.json().get("data", [])
+                free_models = []
+                paid_popular = []
+                for m in items:
+                    mid = str(m.get("id") or "").strip()
+                    if not mid:
+                        continue
+                    pricing = m.get("pricing") or {}
+                    p_prompt = str(pricing.get("prompt", "1")).strip()
+                    p_comp = str(pricing.get("completion", "1")).strip()
+                    is_free = ":free" in mid or (p_prompt in ("0", "0.0") and p_comp in ("0", "0.0"))
+                    if is_free or mid == "openrouter/free":
+                        free_models.append(mid)
+                    else:
+                        paid_popular.append(mid)
+                if "openrouter/free" not in free_models:
+                    free_models.insert(0, "openrouter/free")
+                return free_models + paid_popular[:25]
+        except Exception:
+            pass
+
+    endpoint = f"{clean_url}/models"
     try:
         resp = requests.get(endpoint, headers=headers, timeout=timeout)
         if resp.ok:
             data = resp.json()
             items = data.get("data") or data.get("models") or []
-            models: list[str] = []
+            models = []
             for it in items:
                 mid = str(it.get("id") or it.get("name") or "").strip()
+                if mid.startswith("models/"):
+                    mid = mid[7:]
                 if mid:
                     models.append(mid)
-            if "openrouter" in clean_url.lower():
-                # Поднимаем бесплатные :free модели наверх списка
-                free_m = [m for m in models if ":free" in m]
-                other_m = [m for m in models if ":free" not in m]
-                return sorted(free_m) + other_m[:40]
             return sorted(models)
     except Exception:
         pass
@@ -677,6 +712,8 @@ class LLMClient:
             "Authorization": f"Bearer {self.cloud_api_key}",
             "Content-Type": "application/json",
         }
+        if "googleapis" in self.cloud_base_url.lower():
+            headers["x-goog-api-key"] = self.cloud_api_key
         if "openrouter" in self.cloud_base_url.lower():
             headers["HTTP-Referer"] = "https://github.com/sosiskacorp/DIBot"
             headers["X-Title"] = "DIBot Education Assistant"
