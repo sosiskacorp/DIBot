@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
 
+from ingest import format_math_markdown
 from llm_client import ChatResult, LLMClient, LLMError
 from materials import MaterialStore
 from model_router import classify
@@ -23,20 +24,51 @@ from notes import CITATION_RE
 from search_client import SearchError, SearchResult, WebSearch
 from verification import VerificationReport, Verifier
 
-TUTOR_SYSTEM = """Ты — учебный ассистент студента. Твоя задача — объяснять и решать
-так, чтобы студент мог воспроизвести решение сам.
+TUTOR_SYSTEM = """Ты — DIBot, учебный ИИ-ассистент студента НГТУ. Твоя задача — помогать с учёбой,
+объяснять теорию и решать задачи так, чтобы студент мог воспроизвести решение сам.
 
-Правила:
-1. Если дан КОНТЕКСТ ИЗ МАТЕРИАЛОВ, опирайся на него и ставь ссылку [#id]
-   после каждого утверждения, взятого оттуда. Не пересказывай контекст целиком.
-2. Если в материалах ответа нет — реши сам и явно напиши: «в материалах этого
-   нет, отвечаю по общим знаниям».
+Твои возможности (если спрашивают «что ты можешь / кто ты»):
+- Работа с базой курсов и лекций из DiSpace НГТУ (поиск по лекциям, методичкам, формулам и заданиям).
+- Распознавание прикреплённых фотографий и сканов тетрадей/заданий (модель зрения `qwen3-vl`).
+- Пошаговое решение задач по высшей математике, линейной алгебре, матанализу и физике (`deepseek-r1`) с символьной проверкой ответа через `SymPy`.
+- Написание, разбор и отладка кода (Python, C/C++, алгоритмы) и оформление формул в LaTeX (`qwen2.5-coder`).
+- Составление проверяемых конспектов со ссылками `[#id]` на фрагменты лекций и генерация тренировочных вариантов.
+
+Правила ответа:
+1. Если дан КОНТЕКСТ ИЗ МАТЕРИАЛОВ и он относится к сути вопроса — опирайся на него и ставь ссылку `[#id]` после каждого факта из материалов. Если приведённый контекст не относится к вопросу (например, вопрос общий или о твоих возможностях) — просто игнорируй контекст и не упоминай посторонние курсы.
+2. Все математические формулы и символы оформляй ТОЛЬКО через `$...$` (строчные, без пробелов сразу после открывающего и перед закрывающим `$`) и `$$...$$` с новой строки (крупные формулы, матрицы, системы, пределы, интегралы). Не используй `\\(...\\)` и `\\[...\\]`.
 3. Любые вычисления показывай пошагово, а не только результат.
-4. Для задач оформляй решение как в тетради: дано, ход, ответ.
-5. Завершай строкой «Ответ: ...» — по ней работает автоматическая проверка.
-6. Никаких обращений к читателю вроде «как видите» и воды.
-7. Если вопрос теоретический («что такое», «объясни»), отвечай связным
-   объяснением без блоков «Дано / Ход решения / Ответ»."""
+4. Для расчётных задач оформляй решение как в тетради: Дано, Ход решения, и в конце отдельной строкой «Ответ: ...» — по ней работает автоматическая проверка SymPy.
+5. Если вопрос теоретический, общий или разговорный — отвечай связно и по делу без блоков «Дано / Ход решения / Ответ»."""
+
+_META_QUERY_RE = re.compile(
+    r"(?i)^\s*(?:привет\w*|здравствуй\w*|добрый\s+\w+|кто\s+ты|что\s+ты\s+(?:можешь|умеешь|такое|за\s+бот)|"
+    r"чем\s+(?:ты\s+)?можешь\s+помочь|какие\s+у\s+тебя\s+(?:возможности|функции)|"
+    r"как\s+(?:с\s+тобой|тобой)\s+(?:работать|пользоваться)|расскажи\s+о\s+себе|помощь|help)\s*[?!.]*\s*$"
+)
+
+
+def _is_meta_or_conversational(query: str) -> bool:
+    """Определить, является ли запрос приветствием или вопросом о самом боте (не требующим поиска по лекциям)."""
+    q = (query or "").strip()
+    if not q:
+        return False
+    if _META_QUERY_RE.match(q):
+        return True
+    lowered = q.lower()
+    if len(q) <= 60 and any(
+        phrase in lowered
+        for phrase in (
+            "что ты можешь",
+            "что ты умеешь",
+            "кто ты такой",
+            "чем можешь помочь",
+            "твои возможности",
+            "какие курсы у тебя",
+        )
+    ):
+        return True
+    return False
 
 PRACTICE_SYSTEM = """Ты составляешь тренировочные задания по учебной теме.
 
@@ -156,20 +188,35 @@ class Tutor:
         used = "нет"
 
         if extracted_image_text:
+            extracted_image_text = format_math_markdown(extracted_image_text)
             parts.append("РАСПОЗНАННЫЙ ТЕКСТ И ФОРМУЛЫ С ФОТО:\n" + extracted_image_text)
             used = "фото"
 
-        notes_context = self.store.context_for(combined_query, k=4, course=course)
-        if notes_context:
-            parts.append("КОНТЕКСТ ИЗ МАТЕРИАЛОВ:\n" + notes_context)
-            used = "фото + материалы" if extracted_image_text else "материалы"
-            sources.extend(
-                f"{chunk.title} (фр. {chunk.index + 1})"
-                for chunk, _ in self.store.search(combined_query, k=4, course=course)
-            )
+        is_meta = not extracted_image_text and _is_meta_or_conversational(clean_question)
+        if is_meta:
+            loaded_courses = self.store.list_courses()
+            if loaded_courses:
+                parts.append(
+                    "ДОСТУПНЫЕ СЕЙЧАС В БАЗЕ КУРСЫ СТУДЕНТА:\n"
+                    + "\n".join(f"- {c}" for c in loaded_courses)
+                )
+        else:
+            hits = self.store.search(combined_query, k=4, course=course, min_score=2.2)
+            if hits:
+                blocks, chars_used = [], 0
+                for chunk, _score in hits:
+                    block = f"[{chunk.id}] «{chunk.title}», фр. {chunk.index + 1}\n{chunk.text}"
+                    if chars_used + len(block) > 4500:
+                        break
+                    blocks.append(block)
+                    chars_used += len(block)
+                    sources.append(f"{chunk.title} (фр. {chunk.index + 1})")
+                if blocks:
+                    parts.append("КОНТЕКСТ ИЗ МАТЕРИАЛОВ:\n" + "\n\n---\n\n".join(blocks))
+                    used = "фото + материалы" if extracted_image_text else "материалы"
 
         web_results: list[SearchResult] = []
-        if use_web:
+        if use_web and not is_meta:
             try:
                 web_context, web_results = self.search.context(combined_query, limit=4)
                 if web_context:
@@ -202,7 +249,7 @@ class Tutor:
             text_hint=combined_query,
             images=pass_images,
         )
-        answer_text = _strip_prompt_echo(result.text, TUTOR_SYSTEM)
+        answer_text = format_math_markdown(_strip_prompt_echo(result.text, TUTOR_SYSTEM))
 
         model_badge = (
             f"{vision_model_used} -> {result.model}"
@@ -210,8 +257,11 @@ class Tutor:
             else result.model
         )
 
+        # Проверка (SymPy + кросс-модель) запускается только для расчётных/кодовых задач, а не для обычного диалога!
         should_verify = (
-            resolved_task in self.verify_tasks if verify is None else verify
+            (resolved_task in self.verify_tasks)
+            if verify is None
+            else (bool(verify) and resolved_task in self.verify_tasks)
         )
         report = None
         if should_verify and answer_text:

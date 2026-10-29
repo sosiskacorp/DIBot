@@ -28,22 +28,32 @@ import streamlit as st
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import ingest as _ingest_mod  # noqa: E402
 import llm_client as _llm_client_mod  # noqa: E402
 import lms_reader as _lms_reader_mod  # noqa: E402
 import materials as _materials_mod  # noqa: E402
 import tutor as _tutor_mod  # noqa: E402
-from ingest import extract_docx_bytes, extract_pdf_bytes  # noqa: E402
 
 # Автоперезагрузка модулей, если сервер Streamlit был запущен до обновления кода
 if (
     not hasattr(_materials_mod.MaterialStore, "reload")
     or not hasattr(_lms_reader_mod.DiSpaceAPI, "import_course_to_store")
     or not hasattr(_lms_reader_mod, "authenticate_dispace_input")
+    or not hasattr(_ingest_mod, "decode_bytes_smart")
 ):
+    importlib.reload(_ingest_mod)
     importlib.reload(_materials_mod)
     importlib.reload(_llm_client_mod)
     importlib.reload(_lms_reader_mod)
     importlib.reload(_tutor_mod)
+
+from ingest import (  # noqa: E402
+    decode_bytes_smart,
+    extract_docx_bytes,
+    extract_pdf_bytes,
+    format_math_markdown,
+    html_to_text,
+)
 
 from llm_client import LLMClient, LLMError  # noqa: E402
 from lms_reader import (  # noqa: E402
@@ -301,6 +311,56 @@ def ollama_status() -> dict[str, Any]:
     }
 
 
+def _fmt_cell(val: Any) -> str:
+    """Единообразно форматировать значение ячейки таблицы в строку, чтобы избежать ArrowTypeError в pyarrow."""
+    if val is None or val == "":
+        return "—"
+    if isinstance(val, float):
+        return f"{val:g}"
+    return str(val)
+
+
+def render_video_url(url: str, title: str = "") -> None:
+    """Отрисовать встроенный видеоплеер для прямых видеофайлов, YouTube, Kinescope, Rutube, VK Video."""
+    u = (url or "").strip()
+    if not u:
+        return
+    lower = u.lower().split("?", 1)[0]
+    if lower.endswith((".mp4", ".webm", ".mov", ".ogg")) or "youtube.com/watch" in u.lower() or "youtu.be/" in u.lower():
+        try:
+            st.video(u)
+            return
+        except Exception:
+            pass
+    if any(host in u.lower() for host in ("kinescope.io/", "rutube.ru/play/embed", "vk.com/video_ext")):
+        try:
+            st.components.v1.iframe(u, height=400, scrolling=False)
+            return
+        except Exception:
+            pass
+    if title:
+        st.markdown(f"🎬 **[{title}]({u})**")
+
+
+def render_rich_content(text: str) -> None:
+    """Отрисовать текст с нормализованными формулами LaTeX ($...$, $$...$$), фото и встроенными видеоплеерами."""
+    if not text:
+        return
+    import re as _re
+
+    formatted = format_math_markdown(text)
+    st.markdown(formatted)
+
+    # Если в тексте встречаются ссылки на видео (🎬 [Название](url) или прямые ссылки на kinescope/mp4/youtube),
+    # отобразим встроенный видеоплеер под блоком
+    video_matches = _re.findall(r"🎬\s*\[([^\]]*)\]\((https?://[^\s)]+)\)", formatted)
+    seen_vids: set[str] = set()
+    for v_title, v_url in video_matches:
+        if v_url not in seen_vids:
+            seen_vids.add(v_url)
+            render_video_url(v_url, v_title)
+
+
 def render_verification(report) -> None:
     colors = {"confirmed": "✅", "disputed": "⛔", "unverified": "⚠️"}
     labels = {
@@ -322,21 +382,21 @@ def render_verification(report) -> None:
 
 
 def render_assistant_turn(turn: dict[str, Any]) -> None:
-    """Отрисовать сообщение ассистента со всеми деталями (фото-OCR, ход мыслей, проверка)."""
+    """Отрисовать сообщение ассистента со всеми деталями (фото-OCR, формулы, видео, ход мыслей, проверка)."""
     ans: Answer | None = turn.get("answer")
     if ans is None:
-        st.markdown(turn.get("content", ""))
+        render_rich_content(turn.get("content", ""))
         return
 
     if ans.extracted_image_text:
         with st.expander("📷 Распознано с прикреплённого фото (qwen3-vl)", expanded=False):
-            st.markdown(ans.extracted_image_text)
+            render_rich_content(ans.extracted_image_text)
 
     if ans.thinking:
         with st.expander("💭 Ход рассуждений модели", expanded=False):
             st.caption(ans.thinking)
 
-    st.markdown(ans.text)
+    render_rich_content(ans.text)
 
     badges = [
         f"модель: `{ans.model}`",
@@ -483,11 +543,11 @@ with tabs[0]:
 
     # Приветственный экран и быстрые подсказки, когда чат пуст
     if not st.session_state.chat_turns:
-        st.markdown("### 💬 Учебный чат с поддержкой фото, формул и проверки")
+        st.markdown("### 💬 Учебный чат с поддержкой фото, видео, формул и файлов")
         st.caption(
-            "Задай вопрос по лекциям, отправь условие задачи или **прикрепи скан/фото тетради** "
-            "прямо в поле ввода внизу (иконка скрепки). Фото распознаётся моделью `qwen3-vl:8b`, "
-            "задача решается с опорой на твои материалы из DiSpace и проверяется через SymPy."
+            "Задай вопрос по лекциям, отправь условие задачи или **прикрепи фото/видео/документ** "
+            "прямо в поле ввода внизу (иконка скрепки). Фото распознаётся моделью `qwen3-vl`, "
+            "математические формулы рендерятся через KaTeX, а расчётные задачи проверяются в `SymPy`."
         )
         suggestions = [
             "Реши систему 2x + y = 5, x + 3y = 10 методом Крамера и проверь ответ",
@@ -515,20 +575,29 @@ with tabs[0]:
                         for idx, img_bytes in enumerate(turn["images"]):
                             with img_cols[idx % len(img_cols)]:
                                 st.image(img_bytes, width=280)
+                    if turn.get("videos"):
+                        for vid_bytes in turn["videos"]:
+                            st.video(vid_bytes)
                     if turn.get("content"):
-                        st.markdown(turn["content"])
+                        render_rich_content(turn["content"])
                 else:
                     render_assistant_turn(turn)
 
-    # Поле ввода чата с прикреплением фотографий
+    # Поле ввода чата с прикреплением фото, видео и документов в любых кодировках
     chat_submission = st.chat_input(
-        "Напиши вопрос, задачу или прикрепи фото задания (PNG, JPG, WEBP)…",
+        "Напиши вопрос, задачу или прикрепи фото, видео, PDF/DOCX/TXT…",
         accept_file="multiple",
-        file_type=["png", "jpg", "jpeg", "webp"],
+        file_type=[
+            "png", "jpg", "jpeg", "webp", "gif", "bmp",
+            "mp4", "webm", "mov",
+            "pdf", "docx", "txt", "md", "tex", "csv", "html",
+        ],
     )
 
     user_text = ""
     attached_images: list[bytes] = []
+    attached_videos: list[bytes] = []
+    attached_docs_text: list[str] = []
 
     if chat_submission is not None:
         if isinstance(chat_submission, str):
@@ -536,12 +605,40 @@ with tabs[0]:
         else:
             user_text = (getattr(chat_submission, "text", "") or "").strip()
             for f_obj in getattr(chat_submission, "files", None) or []:
-                attached_images.append(bytes(f_obj.getvalue()))
+                fname = str(getattr(f_obj, "name", "") or "").lower()
+                raw_data = bytes(f_obj.getvalue())
+                if fname.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")):
+                    attached_images.append(raw_data)
+                elif fname.endswith((".mp4", ".webm", ".mov")):
+                    attached_videos.append(raw_data)
+                elif fname.endswith(".pdf"):
+                    try:
+                        attached_docs_text.append(f"--- Файл {f_obj.name} ---\n{extract_pdf_bytes(raw_data)[:6000]}")
+                    except Exception:
+                        pass
+                elif fname.endswith(".docx"):
+                    try:
+                        attached_docs_text.append(f"--- Файл {f_obj.name} ---\n{extract_docx_bytes(raw_data)[:6000]}")
+                    except Exception:
+                        pass
+                else:
+                    decoded_doc = decode_bytes_smart(raw_data)
+                    if fname.endswith((".html", ".htm")):
+                        decoded_doc = html_to_text(decoded_doc)
+                    if decoded_doc.strip():
+                        attached_docs_text.append(f"--- Файл {f_obj.name} ---\n{decoded_doc[:6000]}")
     elif picked_suggestion:
         user_text = picked_suggestion
 
-    if user_text or attached_images:
-        display_text = user_text or "📷 Разбери и реши задание на прикреплённом фото."
+    if attached_docs_text:
+        docs_joined = "\n\n".join(attached_docs_text)
+        user_text = f"{user_text}\n\nПрикреплённый текст:\n{docs_joined}".strip()
+
+    if user_text or attached_images or attached_videos:
+        display_text = (
+            user_text
+            or ("📷 Разбери и реши задание на прикреплённом фото." if attached_images else "🎬 Прикреплено видео.")
+        )
 
         # Собираем историю предыдущих реплик для многошагового контекста
         history_messages: list[dict[str, str]] = []
@@ -560,6 +657,7 @@ with tabs[0]:
                 "role": "user",
                 "content": display_text,
                 "images": attached_images,
+                "videos": attached_videos,
             }
         )
 
@@ -570,13 +668,16 @@ with tabs[0]:
                     for idx, img_bytes in enumerate(attached_images):
                         with img_cols[idx % len(img_cols)]:
                             st.image(img_bytes, width=280)
-                st.markdown(display_text)
+                if attached_videos:
+                    for vid_bytes in attached_videos:
+                        st.video(vid_bytes)
+                render_rich_content(display_text)
 
             with st.chat_message("assistant"):
                 spinner_msg = (
-                    "Распознаю фото (qwen3-vl), ищу в материалах и решаю задачу…"
+                    "Распознаю фото (qwen3-vl), ищу в материалах и готовлю ответ…"
                     if attached_images
-                    else "Ищу в материалах, решаю и проверяю ответ…"
+                    else "Готовлю ответ…"
                 )
                 with st.spinner(spinner_msg):
                     try:
@@ -877,10 +978,10 @@ with tabs[1]:
                         with st.expander(f"📊 Журнал оценок ({len(journal_cols)} контрольных точек)"):
                             j_rows = [
                                 {
-                                    "Контрольное мероприятие": jc["title"],
-                                    "Макс. балл": jc["ects_limit"] if jc["ects_limit"] is not None else "—",
-                                    "Балл (ECTS)": jc["ects_mark"] if jc["ects_mark"] is not None else "—",
-                                    "Оценка": jc["text_mark"] or "—",
+                                    "Контрольное мероприятие": _fmt_cell(jc.get("title")),
+                                    "Макс. балл": _fmt_cell(jc.get("ects_limit")),
+                                    "Балл (ECTS)": _fmt_cell(jc.get("ects_mark")),
+                                    "Оценка": _fmt_cell(jc.get("text_mark")),
                                 }
                                 for jc in journal_cols
                             ]
@@ -908,7 +1009,8 @@ with tabs[1]:
 
             if events:
                 st.markdown(f"**Расписание на {sel_month:02d}.{sel_year} ({len(events)}):**")
-                st.dataframe(events, width="stretch", hide_index=True)
+                ev_rows = [{k: _fmt_cell(v) for k, v in ev.items()} for ev in events]
+                st.dataframe(ev_rows, width="stretch", hide_index=True)
             else:
                 st.info(f"На {sel_month:02d}.{sel_year} запланированных вебинаров в календаре нет.")
 
@@ -920,7 +1022,8 @@ with tabs[1]:
                         if rec.get("discipline"):
                             st.caption(rec["discipline"])
                         if rec.get("url"):
-                            st.markdown(f"[Открыть запись]({rec['url']})")
+                            render_video_url(rec["url"], rec["title"])
+                            st.markdown(f"[Открыть запись в новой вкладке]({rec['url']})")
             else:
                 st.caption("Записей вебинаров пока нет.")
 
@@ -979,7 +1082,11 @@ with tabs[1]:
 
             st.markdown(f"**Назначенные сессии тестирования (`/tests`): {len(assigned)}**")
             if assigned:
-                st.dataframe(assigned, width="stretch", hide_index=True)
+                safe_assigned = [
+                    {str(k): _fmt_cell(v) for k, v in row.items()} if isinstance(row, dict) else {"Сессия": _fmt_cell(row)}
+                    for row in assigned
+                ]
+                st.dataframe(safe_assigned, width="stretch", hide_index=True)
             else:
                 st.caption("Активных назначенных сессий в разделе `/tests` сейчас нет.")
 
@@ -1090,7 +1197,7 @@ with tabs[1]:
                                 st.caption(f"**{m['sender_name']}** · {m['date'][:19].replace('T', ' ')}")
                                 if m.get("theme"):
                                     st.markdown(f"*{m['theme']}*")
-                                st.markdown(m.get("text") or "*(без текста)*")
+                                render_rich_content(m.get("text") or "*(без текста)*")
                                 for f_info in m.get("files") or []:
                                     f_title = f_info.get("title") or "Файл"
                                     f_url = f_info.get("url") or ""
@@ -1119,7 +1226,7 @@ with tabs[2]:
     m3.metric("Фрагментов (чанков)", stats["chunks"])
     m4.metric("Символов текста", f"{stats['chars']:,}".replace(",", " "))
 
-    with st.expander("➕ Добавить свой файл (.pdf, .docx, .md, .txt) или вставить текст вручную", expanded=False):
+    with st.expander("➕ Добавить свой файл (.pdf, .docx, .md, .txt, .tex, .csv, .html) в любой кодировке", expanded=False):
         with st.form("add_material"):
             f_col1, f_col2 = st.columns(2)
             with f_col1:
@@ -1128,8 +1235,8 @@ with tabs[2]:
             with f_col2:
                 url = st.text_input("Ссылка (необязательно)", placeholder="https://dispace.nstu.ru/...")
                 uploaded = st.file_uploader(
-                    "Файл .txt / .md / .pdf / .docx",
-                    type=["txt", "md", "markdown", "pdf", "docx"],
+                    "Файл .txt / .md / .tex / .csv / .html / .pdf / .docx (автоопределение UTF-8, CP1251, KOI8-R, UTF-16)",
+                    type=["txt", "md", "markdown", "tex", "csv", "html", "htm", "pdf", "docx"],
                 )
             pasted = st.text_area("…или вставь текст лекции / методички", height=120)
             add = st.form_submit_button("Сохранить в базу", type="primary", width="stretch")
@@ -1141,20 +1248,21 @@ with tabs[2]:
                 text = pasted
                 if uploaded:
                     uname = uploaded.name.lower()
+                    raw_data = bytes(uploaded.getbuffer())
                     if uname.endswith(".pdf"):
                         try:
-                            text = extract_pdf_bytes(bytes(uploaded.getbuffer()))
+                            text = extract_pdf_bytes(raw_data)
                         except Exception as exc:
                             st.error(f"Не удалось прочитать PDF: {exc}")
                             text = ""
                     elif uname.endswith(".docx"):
                         try:
-                            text = extract_docx_bytes(bytes(uploaded.getbuffer()))
+                            text = extract_docx_bytes(raw_data)
                         except Exception as exc:
                             st.error(f"Не удалось прочитать DOCX: {exc}")
                             text = ""
                     else:
-                        text = uploaded.getvalue().decode("utf-8", errors="replace")
+                        text = decode_bytes_smart(raw_data)
 
                 if text.strip():
                     source = store.add_source(
@@ -1209,13 +1317,28 @@ with tabs[2]:
 
                         if st.session_state.get(f"prev_toggle_{source.id}", False):
                             full_text = store.get_source_text(source.id)
-                            st.text_area(
-                                "Содержимое источника",
-                                value=full_text[:6000] + ("\n\n… [показаны первые 6000 символов]" if len(full_text) > 6000 else ""),
-                                height=220,
-                                disabled=True,
-                                key=f"ta_prev_{source.id}",
+                            view_mode = st.radio(
+                                "Режим просмотра",
+                                ["📐 Форматированный (формулы LaTeX, фото, видео)", "📄 Исходный текст"],
+                                horizontal=True,
+                                key=f"view_mode_{source.id}",
+                                label_visibility="collapsed",
                             )
+                            if view_mode.startswith("📐"):
+                                with st.container(border=True):
+                                    render_rich_content(
+                                        full_text[:12000]
+                                        + ("\n\n*… [показаны первые 12 000 символов]*" if len(full_text) > 12000 else "")
+                                    )
+                            else:
+                                st.text_area(
+                                    "Содержимое источника",
+                                    value=full_text[:12000]
+                                    + ("\n\n… [показаны первые 12000 символов]" if len(full_text) > 12000 else ""),
+                                    height=260,
+                                    disabled=True,
+                                    key=f"ta_prev_{source.id}",
+                                )
 
 
 # ============================================================= 4. КОНСПЕКТЫ
@@ -1276,7 +1399,7 @@ with tabs[3]:
                     mime="text/markdown",
                 )
                 with st.container(border=True):
-                    st.markdown(note_md)
+                    render_rich_content(note_md)
             else:
                 st.info("Конспект для этого материала ещё не собран. Нажми «Собрать конспект».")
 
@@ -1348,12 +1471,12 @@ with tabs[4]:
                     "unverified": " · ⚠️ эталон не проверен",
                 }.get(report.verdict, "")
             with st.container(border=True):
-                st.markdown(f"**Задание {i}.** {task_item['statement']}")
+                render_rich_content(f"**Задание {i}.** {task_item['statement']}")
                 st.caption(f"Уровень: {task_item.get('difficulty') or p_diff}{badge}")
                 with st.expander("Показать эталонное решение и ответ"):
-                    st.markdown(f"**Ответ:** {task_item.get('answer') or '—'}")
+                    render_rich_content(f"**Ответ:** {task_item.get('answer') or '—'}")
                     if task_item.get("solution"):
-                        st.markdown(task_item["solution"])
+                        render_rich_content(task_item["solution"])
                     if report:
                         for check in report.checks:
                             mark = {"pass": "✅", "fail": "❌", "skipped": "➖", "error": "⚠️"}.get(
@@ -1388,11 +1511,11 @@ with tabs[5]:
             route = llm.router.route(task_name)
             rows.append(
                 {
-                    "Задача": task_name,
-                    "Основная модель": route.model,
+                    "Задача": str(task_name),
+                    "Основная модель": str(route.model),
                     "Размышления (think)": "да" if route.think else "нет",
-                    "Температура": route.temperature,
-                    "Контекст (num_ctx)": route.num_ctx,
+                    "Температура": _fmt_cell(route.temperature),
+                    "Контекст (num_ctx)": _fmt_cell(route.num_ctx),
                     "Запасные модели": ", ".join(route.fallback) or "—",
                 }
             )

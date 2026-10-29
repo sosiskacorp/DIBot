@@ -45,6 +45,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ingest import (  # noqa: E402
+    decode_bytes_smart,
     decode_tex_cp1251,
     extract_docx_bytes,
     extract_pdf_bytes,
@@ -869,14 +870,14 @@ class DiSpaceAPI:
         return self._get(f"api/v1/view/course/block/{block_id}")
 
     def _download_file_text(self, file_info: dict[str, Any]) -> str:
-        """Скачать прикреплённый файл (.pdf, .docx, .txt, .md) и извлечь текст."""
+        """Скачать прикреплённый файл (.pdf, .docx, .txt, .md, .tex, .csv, .html) и извлечь текст с автоопределением кодировки."""
         f_url = file_info.get("url")
         f_title = str(file_info.get("title") or "")
         f_type = str(file_info.get("file_type") or "").lower()
         if not f_url:
             return ""
         ext = Path(f_title).suffix.lower() or (f".{f_type}" if f_type else "")
-        if ext not in {".pdf", ".docx", ".txt", ".md"}:
+        if ext not in {".pdf", ".docx", ".txt", ".md", ".markdown", ".tex", ".csv", ".html", ".htm"}:
             return ""
         try:
             resp = requests.get(f_url, timeout=45)
@@ -890,14 +891,12 @@ class DiSpaceAPI:
                 return extract_pdf_bytes(data)
             if ext == ".docx":
                 return extract_docx_bytes(data)
-            for enc in ("utf-8", "utf-8-sig", "cp1251"):
-                try:
-                    return decode_tex_cp1251(data.decode(enc)).strip()
-                except UnicodeDecodeError:
-                    continue
+            decoded = decode_bytes_smart(data)
+            if ext in {".html", ".htm"}:
+                return html_to_text(decoded)
+            return decoded.strip()
         except Exception:
             return ""
-        return ""
 
     def extract_theme_materials(
         self,
@@ -907,7 +906,7 @@ class DiSpaceAPI:
         theme_title: str = "",
         include_files: bool = True,
     ) -> list[MaterialItem]:
-        """Собрать все текстовые блоки (с LaTeX) и прикреплённые файлы одной темы."""
+        """Собрать все текстовые блоки (с LaTeX, иллюстрациями и видео) и прикреплённые файлы одной темы."""
         theme = self.get_theme(theme_id)
         t_title = theme_title or str(theme.get("title") or f"Тема {theme_id}").strip()
         prefix = f"{module_title} — {t_title}" if module_title else t_title
@@ -941,7 +940,18 @@ class DiSpaceAPI:
                     header = f"### {b_title}\n\n" if b_title and b_title.lower() != t_title.lower() else ""
                     text_parts.append(f"{header}{b_text}")
 
-            elif ctype == "task" or block.get("task"):
+            if ctype == "video" or block.get("video"):
+                vid = block.get("video") or {}
+                v_url = str(vid.get("url") or "").strip()
+                v_title = str(vid.get("title") or "Видеолекция").strip()
+                v_desc = html_to_text(str(vid.get("description") or ""))
+                if v_url:
+                    vid_md = f"### 🎬 {v_title}\n\n🎬 [{v_title}]({v_url})"
+                    if v_desc:
+                        vid_md += f"\n\n{v_desc}"
+                    text_parts.append(vid_md)
+
+            if ctype == "task" or block.get("task"):
                 task = block.get("task") or {}
                 t_name = str(task.get("title") or "Задание").strip()
                 t_body = html_to_text(str(task.get("content") or task.get("description") or ""))
@@ -954,9 +964,16 @@ class DiSpaceAPI:
                     if not f_url or f_url in seen_file_urls:
                         continue
                     seen_file_urls.add(f_url)
+                    f_title = str(f_info.get("title") or "Файл").strip()
+                    f_ext = Path(f_title).suffix.lower() or f".{str(f_info.get('file_type') or '').lower()}"
+                    if f_ext in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}:
+                        text_parts.append(f"![{f_title}]({f_url})")
+                        continue
+                    if f_ext in {".mp4", ".webm", ".mov"}:
+                        text_parts.append(f"🎬 [{f_title}]({f_url})")
+                        continue
                     f_text = self._download_file_text(f_info)
                     if len(f_text) >= 60:
-                        f_title = str(f_info.get("title") or "Файл").strip()
                         file_items.append(
                             MaterialItem(
                                 title=f"{prefix}: {f_title}",

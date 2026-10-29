@@ -705,7 +705,8 @@ class Verifier:
         symbolic = sympy_layer(problem, final_answer or solution)
         checks.append(symbolic)
 
-        if use_model:
+        # Если SymPy уже математически доказал правильность ответа (pass), не тратим 25 с на выгрузку/загрузку второй LLM
+        if use_model and symbolic.status != "pass":
             model_check, _ = model_layer(problem, solution, solver_model, self.llm)
             checks.append(model_check)
 

@@ -30,12 +30,36 @@ _SUFFIXES = (
     "ем", "ом", "ах", "ях", "ия", "ии", "ть", "ся", "ий", "а", "я", "ы", "и",
     "о", "е", "у", "ю", "ь",
 )
+_STOP_WORDS = {
+    "и", "в", "во", "не", "что", "он", "на", "я", "с", "со", "как", "а", "то",
+    "все", "всё", "она", "так", "его", "но", "да", "ты", "к", "у", "же", "вы",
+    "за", "бы", "по", "только", "ее", "её", "мне", "было", "вот", "от", "меня",
+    "еще", "ещё", "нет", "о", "из", "ему", "теперь", "когда", "даже", "ну",
+    "вдруг", "ли", "если", "уже", "или", "ни", "быть", "был", "него", "до",
+    "вас", "нибудь", "опять", "уж", "вам", "ведь", "там", "потом", "себя",
+    "ничего", "ей", "может", "они", "тут", "где", "есть", "надо", "ней", "для",
+    "мы", "тебя", "их", "чем", "была", "сам", "чтоб", "чтобы", "без", "будто",
+    "чего", "раз", "тоже", "себе", "под", "будет", "ж", "тогда", "кто", "этот",
+    "того", "потому", "этого", "какой", "совсем", "ним", "здесь", "этом",
+    "один", "почти", "мой", "тем", "нее", "неё", "сейчас", "были", "куда",
+    "зачем", "всех", "никогда", "можно", "при", "наконец", "два", "об", "другой",
+    "хоть", "после", "над", "больше", "тот", "через", "эти", "нас", "про",
+    "всего", "них", "какая", "какие", "какое", "много", "разве", "три", "эту",
+    "моя", "впрочем", "хорошо", "свою", "этой", "перед", "иногда", "лучше",
+    "чуть", "том", "нельзя", "такой", "такая", "такое", "такие", "им", "более",
+    "всегда", "конечно", "всю", "между", "это", "эта", "можешь", "умеешь",
+    "могу", "можете", "можем", "умею", "умеет", "привет", "здравствуй",
+    "здравствуйте", "помоги", "помогите", "расскажи", "скажи", "объясни",
+    "пожалуйста", "спасибо", "приветствую", "дела", "тебе", "тобой", "вами",
+}
 
 
 def tokenize(text: str) -> list[str]:
-    words = (w.lower() for w in _WORD_RE.findall(text))
+    words = (w.lower().replace("ё", "е") for w in _WORD_RE.findall(text))
     out = []
     for word in words:
+        if word in _STOP_WORDS or len(word) <= 1:
+            continue
         if len(word) <= 3:
             out.append(word)
             continue
@@ -43,7 +67,8 @@ def tokenize(text: str) -> list[str]:
             if word.endswith(suffix) and len(word) - len(suffix) >= 4:
                 word = word[: -len(suffix)]
                 break
-        out.append(word)
+        if word not in _STOP_WORDS:
+            out.append(word)
     return out
 
 
@@ -130,8 +155,18 @@ class MaterialStore:
 
         self.sources: dict[str, Source] = {}
         self.chunks: dict[str, Chunk] = {}
+        self._token_counts: dict[str, dict[str, int]] = {}
+        self._chunk_lengths: dict[str, int] = {}
         self._last_mtime_ns: int = 0
         self._load()
+
+    def _index_chunk_tokens(self, chunk: Chunk) -> None:
+        tokens = tokenize(chunk.text)
+        counts: dict[str, int] = {}
+        for t in tokens:
+            counts[t] = counts.get(t, 0) + 1
+        self._token_counts[chunk.id] = counts
+        self._chunk_lengths[chunk.id] = len(tokens)
 
     # ------------------------------------------------------------ хранение
 
@@ -154,6 +189,8 @@ class MaterialStore:
     def _load(self) -> None:
         self.sources.clear()
         self.chunks.clear()
+        self._token_counts.clear()
+        self._chunk_lengths.clear()
         if not self.index_path.exists():
             self._last_mtime_ns = 0
             return
@@ -168,6 +205,7 @@ class MaterialStore:
         for raw in data.get("chunks", []):
             chunk = Chunk(**raw)
             self.chunks[chunk.id] = chunk
+            self._index_chunk_tokens(chunk)
 
     def _save(self) -> None:
         payload = {
@@ -211,6 +249,8 @@ class MaterialStore:
             if old_source:
                 for cid in old_source.chunk_ids:
                     self.chunks.pop(cid, None)
+                    self._token_counts.pop(cid, None)
+                    self._chunk_lengths.pop(cid, None)
             source_id = existing_id
 
         raw_path = self.sources_dir / f"{source_id}.txt"
@@ -236,6 +276,7 @@ class MaterialStore:
                 text=piece,
             )
             self.chunks[chunk.id] = chunk
+            self._index_chunk_tokens(chunk)
             source.chunk_ids.append(chunk.id)
 
         self.sources[source_id] = source
@@ -249,6 +290,8 @@ class MaterialStore:
             return False
         for chunk_id in source.chunk_ids:
             self.chunks.pop(chunk_id, None)
+            self._token_counts.pop(chunk_id, None)
+            self._chunk_lengths.pop(chunk_id, None)
         (self.sources_dir / f"{source_id}.txt").unlink(missing_ok=True)
         self._save()
         return True
@@ -277,7 +320,7 @@ class MaterialStore:
         course: str | None = None,
         min_score: float = 0.0,
     ) -> list[tuple[Chunk, float]]:
-        """BM25 по фрагментам. Возвращает (фрагмент, вес)."""
+        """BM25 по фрагментам с предвычисленным индексом токенов. Возвращает (фрагмент, вес)."""
         self._sync_if_changed()
         candidates = [
             c for c in self.chunks.values() if course is None or c.course == course
@@ -289,25 +332,27 @@ class MaterialStore:
         if not query_tokens:
             return []
 
-        doc_tokens = {c.id: tokenize(c.text) for c in candidates}
-        avg_len = sum(len(t) for t in doc_tokens.values()) / len(doc_tokens) or 1.0
-        doc_freq: dict[str, int] = {}
-        for tokens in doc_tokens.values():
-            for token in set(tokens):
-                doc_freq[token] = doc_freq.get(token, 0) + 1
+        total_docs = len(candidates)
+        avg_len = (
+            sum(self._chunk_lengths.get(c.id, 0) for c in candidates) / total_docs
+        ) or 1.0
 
-        total_docs = len(doc_tokens)
+        unique_q = set(query_tokens)
+        doc_freq: dict[str, int] = {qt: 0 for qt in unique_q}
+        for c in candidates:
+            c_counts = self._token_counts.get(c.id) or {}
+            for qt in unique_q:
+                if qt in c_counts:
+                    doc_freq[qt] += 1
+
         k1, b = 1.5, 0.75
         scored: list[tuple[Chunk, float]] = []
 
         for chunk in candidates:
-            tokens = doc_tokens[chunk.id]
-            if not tokens:
+            counts = self._token_counts.get(chunk.id)
+            if not counts:
                 continue
-            length = len(tokens)
-            counts: dict[str, int] = {}
-            for token in tokens:
-                counts[token] = counts.get(token, 0) + 1
+            length = self._chunk_lengths.get(chunk.id, 1)
 
             score = 0.0
             for token in query_tokens:
@@ -331,9 +376,10 @@ class MaterialStore:
         k: int = 5,
         max_chars: int = 6000,
         course: str | None = None,
+        min_score: float = 2.0,
     ) -> str:
-        """Собрать контекст с маркерами ссылок для промпта."""
-        hits = self.search(query, k=k, course=course)
+        """Собрать контекст с маркерами ссылок для промпта (только релевантные фрагменты)."""
+        hits = self.search(query, k=k, course=course, min_score=min_score)
         if not hits:
             return ""
         blocks, used = [], 0

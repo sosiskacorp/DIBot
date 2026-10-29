@@ -3,7 +3,7 @@
     "base_url": "http://localhost:11434",
     "models_dir": "D:\\OllamaModels",
     "request_timeout": 600,
-    "keep_alive": "5m",
+    "keep_alive": "30m",
     "model_cache_ttl": 30
   },
 
@@ -81,7 +81,7 @@
       "model": "qwen3.5:9b",
       "fallback": ["deepseek-r1:8b", "qwen2.5-coder:7b"],
       "temperature": 0.0,
-      "think": true
+      "think": false
     }
   },
 
