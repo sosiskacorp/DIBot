@@ -49,6 +49,12 @@ _STOP_WORDS = {
     "могу", "можете", "можем", "умею", "умеет", "привет", "здравствуй",
     "здравствуйте", "помоги", "помогите", "расскажи", "скажи", "объясни",
     "пожалуйста", "спасибо", "приветствую", "дела", "тебе", "тобой", "вами",
+    # Мета-слова учебных тестов и заданий, чтобы они не размывали поиск по курсам
+    "решите", "реши", "найдите", "найди", "вычислите", "вычисли", "задание", "задания",
+    "задача", "задачи", "номер", "вариант", "варианта", "варианты", "вариантов", "ответа",
+    "ответов", "выберите", "выбрать", "условие", "условия", "требуется", "дан", "дано",
+    "картинке", "фото", "изображении", "рисунке", "текст", "следующий", "следующая",
+    "следующее", "следующие", "правильный", "верный", "выберите один вариант ответа",
 }
 
 
@@ -159,12 +165,16 @@ class MaterialStore:
         self._load()
 
     def _index_chunk_tokens(self, chunk: Chunk) -> None:
-        tokens = tokenize(chunk.text)
+        body_tokens = tokenize(chunk.text)
+        # Название лекции и курс получают двойной вес — это гарантирует точное нахождение нужной темы
+        title_tokens = tokenize(chunk.title) * 2
+        course_tokens = tokenize(chunk.course) * 2
+        all_tokens = body_tokens + title_tokens + course_tokens
         counts: dict[str, int] = {}
-        for t in tokens:
+        for t in all_tokens:
             counts[t] = counts.get(t, 0) + 1
         self._token_counts[chunk.id] = counts
-        self._chunk_lengths[chunk.id] = len(tokens)
+        self._chunk_lengths[chunk.id] = len(all_tokens)
 
     # ------------------------------------------------------------ хранение
 
@@ -366,7 +376,32 @@ class MaterialStore:
                 scored.append((chunk, round(score, 3)))
 
         scored.sort(key=lambda item: item[1], reverse=True)
+
+        # Умная фильтрация по дисциплине при сквозном поиске ("Все курсы"):
+        # Если найден сильный лидер (score >= 12.0), отсекаем посторонние случайные дисциплины
+        if course is None and scored:
+            course_max: dict[str, float] = {}
+            for ch, sc in scored:
+                course_max[ch.course] = max(course_max.get(ch.course, 0.0), sc)
+
+            best_course, best_sc = max(course_max.items(), key=lambda it: it[1])
+            if best_sc >= 12.0:
+                # Оставляем только курсы, сопоставимые с лидером (>= 60% от максимума)
+                allowed_courses = {c for c, sc in course_max.items() if sc >= best_sc * 0.60}
+                scored = [it for it in scored if it[0].course in allowed_courses]
+
         return scored[:k]
+
+    def detect_course(self, query: str) -> str | None:
+        """Определить наиболее вероятную дисциплину для запроса/задачи."""
+        hits = self.search(query, k=6)
+        if not hits:
+            return None
+        course_max: dict[str, float] = {}
+        for ch, sc in hits:
+            course_max[ch.course] = max(course_max.get(ch.course, 0.0), sc)
+        best_course, best_sc = max(course_max.items(), key=lambda it: it[1])
+        return best_course if best_sc >= 10.0 else None
 
     def context_for(
         self,

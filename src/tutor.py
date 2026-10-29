@@ -32,8 +32,13 @@ TUTOR_SYSTEM = """Ты — DIBot, учебный ИИ-ассистент сту�
 - Написание, разбор и отладка кода (Python, C/C++, алгоритмы) и оформление формул в LaTeX (`qwen2.5-coder`).
 - Составление проверяемых конспектов со ссылками `[#id]` на фрагменты лекций и генерация тренировочных вариантов.
 
-Правила ответа:
-1. Если дан КОНТЕКСТ ИЗ МАТЕРИАЛОВ и он относится к сути вопроса — опирайся на него и ставь ссылку `[#id]` после каждого факта из материалов. Если приведённый контекст не относится к вопросу (например, вопрос общий или о твоих возможностях) — просто игнорируй контекст и не упоминай посторонние курсы.
+Правила работы с материалами курсов студента:
+1. Если предоставлены материалы из лекций (блок «ТЕОРЕТИЧЕСКИЕ МАТЕРИАЛЫ КУРСА»):
+   - Обязательно опирайся на этот материал! Он взят напрямую из учебных курсов студента в DiSpace НГТУ.
+   - В начале решения в блоке «Теоретическая база» явно назови дисциплину и тему лекции (например: «По материалам курса {курс}, лекции «{тема}» [#{id}]...»).
+   - Выпиши исходную формулу, теорему или определение в тех обозначениях, которые даны в лекции.
+   - Обязательно сошлись на соответствующий фрагмент лекции: `[#{id}]`.
+   - Если предоставленный контекст явно не относится к вопросу (например, вопрос общий или о твоих возможностях) — не упоминай посторонние курсы.
 2. Все математические формулы и символы оформляй ТОЛЬКО через `$...$` (строчные, без пробелов сразу после открывающего и перед закрывающим `$`) и `$$...$$` с новой строки (крупные формулы, матрицы, системы, пределы, интегралы). Не используй `\\(...\\)` и `\\[...\\]`.
 3. Любые вычисления показывай пошагово, а не только результат.
 4. Для расчётных задач оформляй решение как в тетради: Дано, Ход решения, и в конце отдельной строкой «Ответ: ...» — по ней работает автоматическая проверка SymPy.
@@ -246,114 +251,32 @@ class Tutor:
         extracted_image_text = ""
         vision_model_used = ""
 
-        # Шаг 1: если прикреплены фото, обрабатываем через vision-модель (qwen3-vl:8b)
+        # Шаг 1: если прикреплены фото, извлекаем условие и формулы через vision-модель (qwen3-vl:8b)
         if images:
-            # Если не запрошен принудительный пересчёт через math (deepseek-r1) или code (qwen2.5-coder),
-            # запускаем прямое однопроходное зрение + решение задачи через qwen3-vl.
-            # Это исключает двойную выгрузку/загрузку 6-гигабайтных моделей в видеопамяти и ускоряет ответ в 3–4 раза!
-            if task not in ("math", "code"):
-                if on_stream is not None:
-                    try:
-                        on_stream("status", "👁️ Решаю задание с изображения в реальном времени (qwen3-vl)…", "qwen3-vl:8b")
-                    except Exception:
-                        pass
-
-                # Ищем контекст в материалах курса по тексту вопроса, если он есть
-                parts: list[str] = []
-                sources: list[str] = []
-                used = "фото"
-                if clean_question and not _is_meta_or_conversational(clean_question) and not _is_generic_image_query(clean_question):
-                    hits = self.store.search(clean_question, k=2, course=course, min_score=2.5)
-                    if hits:
-                        blocks, chars_used = [], 0
-                        for chunk, _score in hits:
-                            block = f"[{chunk.id}] «{chunk.title}», фр. {chunk.index + 1}\n{chunk.text}"
-                            if chars_used + len(block) > 2500:
-                                break
-                            blocks.append(block)
-                            chars_used += len(block)
-                            sources.append(f"{chunk.title} (фр. {chunk.index + 1})")
-                        if blocks:
-                            parts.append("ТЕОРЕТИЧЕСКИЙ КОНТЕКСТ ИЗ МАТЕРИАЛОВ:\n" + "\n\n---\n\n".join(blocks))
-                            used = "фото + материалы"
-
-                prompt_parts = []
-                if parts:
-                    prompt_parts.append("\n\n".join(parts))
-                prompt_parts.append(
-                    f"ВОПРОС / ЗАДАНИЕ:\n{clean_question}\n\n"
-                    "Реши задачу с прикреплённого изображения:\n"
-                    "1. Чётко выпиши условие и все предложенные варианты ответов.\n"
-                    "2. Подробно объясни теоретическую базу и формулы (в LaTeX: $...$ и $$...$$).\n"
-                    "3. Покажи тетрадный пошаговый ход решения.\n"
-                    "4. В конце отдельной строкой обязательно укажи итоговый верный ответ (например, «Ответ: вариант 2»).\n"
-                    "Важно: пиши структурированно и обязательно доведи математические выкладки до конца без обрыва текста."
-                )
-                user_content = "\n\n".join(prompt_parts)
-
-                messages: list[dict[str, str]] = [{"role": "system", "content": TUTOR_SYSTEM}]
-                if history:
-                    for m in history[-6:]:
-                        role = str(m.get("role") or "user")
-                        content = str(m.get("content") or "").strip()
-                        if role in ("user", "assistant") and content:
-                            messages.append({"role": role, "content": content})
-                messages.append({"role": "user", "content": user_content})
-
-                result: ChatResult = self.llm.chat(
-                    messages,
-                    task="vision",
-                    text_hint=clean_question,
-                    images=images,
-                    on_stream=on_stream,
-                )
-                answer_text = format_math_markdown(_strip_prompt_echo(result.text, TUTOR_SYSTEM))
-
-                report = None
-                if (verify if verify is not None else True) and answer_text:
-                    report = self.verifier.verify(
-                        problem=clean_question or answer_text[:200],
-                        solution=answer_text,
-                        solver_model=result.model,
-                        use_model=False,
-                    )
-
-                return Answer(
-                    question=clean_question,
-                    text=answer_text,
-                    task="vision",
-                    model=result.model,
-                    seconds=round(time.perf_counter() - started, 2),
-                    sources=_dedupe(sources),
-                    verification=report,
-                    context_used=used,
-                    thinking=result.thinking,
-                    extracted_image_text="",
-                )
-
-            # Двухпроходный режим (только если пользователь явно выбрал режим math или code):
-            # сначала распознаём текст через qwen3-vl с живой трансляцией, затем решаем выбранной моделью.
             if on_stream is not None:
                 try:
-                    on_stream("status", "👁️ Распознаю формулы и текст с изображения (qwen3-vl)…", "qwen3-vl:8b")
+                    on_stream("status", "👁️ Распознаю условие и формулы с изображения (qwen3-vl)…", "qwen3-vl:8b")
                 except Exception:
                     pass
             vision_prompt = (
-                "Перепиши условие задачи, текст и все формулы (в LaTeX) с изображения."
+                "Перепиши точный текст условия задачи, все предложенные варианты ответов и все формулы (в LaTeX) с изображения."
                 if not question.strip()
-                else f"Запрос пользователя: {clean_question}\n\nПерепиши весь текст, формулы (в LaTeX) и данные с изображения, необходимые для ответа."
+                else f"Запрос пользователя: {clean_question}\n\nПерепиши весь текст, варианты ответов и формулы (в LaTeX) с изображения, необходимые для решения задачи."
             )
-            vision_res = self.llm.chat(
-                [
-                    {"role": "system", "content": VISION_EXTRACT_SYSTEM},
-                    {"role": "user", "content": vision_prompt},
-                ],
-                task="vision",
-                images=images,
-                on_stream=on_stream,
-            )
-            extracted_image_text = vision_res.text.strip()
-            vision_model_used = vision_res.model
+            try:
+                vision_res = self.llm.chat(
+                    [
+                        {"role": "system", "content": VISION_EXTRACT_SYSTEM},
+                        {"role": "user", "content": vision_prompt},
+                    ],
+                    task="vision",
+                    images=images,
+                    on_stream=on_stream,
+                )
+                extracted_image_text = vision_res.text.strip()
+                vision_model_used = vision_res.model
+            except Exception as exc:
+                extracted_image_text = ""
 
         # Совмещаем вопрос пользователя и распознанный текст с фото для поиска и классификации
         combined_query = (
@@ -370,6 +293,7 @@ class Tutor:
         parts: list[str] = []
         sources: list[str] = []
         used = "нет"
+        primary_course = ""
 
         if extracted_image_text:
             extracted_image_text = format_math_markdown(extracted_image_text)
@@ -385,18 +309,32 @@ class Tutor:
                     + "\n".join(f"- {c}" for c in loaded_courses)
                 )
         else:
-            hits = self.store.search(combined_query, k=4, course=course, min_score=2.2)
+            hits = self.store.search(combined_query, k=4, course=course, min_score=2.0)
             if hits:
+                primary_course = hits[0][0].course
+                # Если запрос точно сошёлся с курсом высшей математики, решаем специализированной моделью math
+                if resolved_task == "chat" and primary_course in ("Математический анализ", "Линейная алгебра"):
+                    resolved_task = "math"
+
                 blocks, chars_used = [], 0
                 for chunk, _score in hits:
-                    block = f"[{chunk.id}] «{chunk.title}», фр. {chunk.index + 1}\n{chunk.text}"
-                    if chars_used + len(block) > 4500:
+                    block = (
+                        f"📘 ДИСЦИПЛИНА (КУРС): «{chunk.course}»\n"
+                        f"📑 ТЕМА / ЛЕКЦИЯ: «{chunk.title}» (фрагмент {chunk.index + 1}, ссылка [#{chunk.id}])\n"
+                        f"{chunk.text}"
+                    )
+                    if chars_used + len(block) > 4800:
                         break
                     blocks.append(block)
                     chars_used += len(block)
-                    sources.append(f"{chunk.title} (фр. {chunk.index + 1})")
+                    sources.append(f"«{chunk.course}» — {chunk.title} (фр. {chunk.index + 1})")
                 if blocks:
-                    parts.append("КОНТЕКСТ ИЗ МАТЕРИАЛОВ:\n" + "\n\n---\n\n".join(blocks))
+                    parts.append(
+                        f"📚 ТЕОРЕТИЧЕСКИЕ МАТЕРИАЛЫ КУРСА «{primary_course}»:\n"
+                        f"Ниже приведены официальные материалы лекций студента из базы курсов DiSpace НГТУ.\n"
+                        f"При решении задачи строго опирайся на эти определения, формулы и обозначения:\n\n"
+                        + "\n\n---\n\n".join(blocks)
+                    )
                     used = "фото + материалы" if extracted_image_text else "материалы"
 
         web_results: list[SearchResult] = []
@@ -412,7 +350,18 @@ class Tutor:
         prompt_parts = []
         if parts:
             prompt_parts.append("\n\n".join(parts))
-        prompt_parts.append(f"ВОПРОС:\n{clean_question}")
+
+        display_problem = combined_query if extracted_image_text else clean_question
+        if resolved_task == "math":
+            prompt_parts.append(
+                f"УСЛОВИЕ ЗАДАЧИ:\n{display_problem}\n\n"
+                f"ИНСТРУКЦИЯ К РЕШЕНИЮ:\n"
+                f"1. В начале ответа обязательно укажи дисциплину «{primary_course or 'Математика'}» и тему лекции, откуда берётся теоретическая база, выпиши формулу в LaTeX и укажи ссылку на фрагмент [#{hits[0][0].id if (not is_meta and hits) else 'источник'}].\n"
+                f"2. Подробно распиши ход решения по шагам, подставляя данные задачи в формулу из лекции.\n"
+                f"3. В конце отдельной строкой напиши однозначный «Ответ: ...» (например: «Ответ: вариант 4»)."
+            )
+        else:
+            prompt_parts.append(f"ВОПРОС:\n{clean_question}")
         user_content = "\n\n".join(prompt_parts)
 
         messages: list[dict[str, str]] = [{"role": "system", "content": TUTOR_SYSTEM}]
@@ -540,10 +489,12 @@ class Tutor:
             if hits:
                 blocks = []
                 for ch, _sc in hits[:3]:
-                    blocks.append(f"[{ch.id}] «{ch.title}»:\n{ch.text}")
-                    sources.append(f"{ch.title} (фр. {ch.index + 1})")
+                    blocks.append(
+                        f"📘 ДИСЦИПЛИНА: «{ch.course}» | 📑 ЛЕКЦИЯ: «{ch.title}» (фр. {ch.index + 1}, [#{ch.id}]):\n{ch.text}"
+                    )
+                    sources.append(f"«{ch.course}» — {ch.title} (фр. {ch.index + 1})")
                 theory_context = "\n\n---\n\n".join(blocks)
-                used = "материалы курса"
+                used = f"материалы курса «{hits[0][0].course}»"
 
         prompt_parts: list[str] = []
         if theory_context:
