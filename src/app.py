@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import importlib
 import subprocess
 import sys
 from pathlib import Path
@@ -26,7 +27,21 @@ import streamlit as st
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import llm_client as _llm_client_mod  # noqa: E402
+import lms_reader as _lms_reader_mod  # noqa: E402
+import materials as _materials_mod  # noqa: E402
+import tutor as _tutor_mod  # noqa: E402
 from ingest import extract_docx_bytes, extract_pdf_bytes  # noqa: E402
+
+# Автоперезагрузка модулей, если сервер Streamlit был запущен до обновления кода
+if not hasattr(_materials_mod.MaterialStore, "reload") or not hasattr(
+    _lms_reader_mod.DiSpaceAPI, "import_course_to_store"
+):
+    importlib.reload(_materials_mod)
+    importlib.reload(_llm_client_mod)
+    importlib.reload(_lms_reader_mod)
+    importlib.reload(_tutor_mod)
+
 from llm_client import LLMError  # noqa: E402
 from lms_reader import (  # noqa: E402
     CATALOG_URL,
@@ -66,7 +81,18 @@ def get_tutor() -> Tutor:
 def sync_materials() -> MaterialStore:
     """Перечитать индекс материалов с диска, чтобы импортированные курсы сразу появлялись в UI."""
     store = get_store()
-    store.reload()
+    if not hasattr(store, "reload") or not hasattr(store, "get_source_text"):
+        importlib.reload(_materials_mod)
+        importlib.reload(_llm_client_mod)
+        importlib.reload(_lms_reader_mod)
+        importlib.reload(_tutor_mod)
+        get_store.clear()
+        get_tutor.clear()
+        store = get_store()
+    if hasattr(store, "reload"):
+        store.reload()
+    elif hasattr(store, "_load"):
+        store._load()
     return store
 
 
