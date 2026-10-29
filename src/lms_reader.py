@@ -318,6 +318,318 @@ class DiSpaceAPI:
     def get_course(self, course_id: int) -> dict[str, Any]:
         return self._get(f"api/v1/view/course/{course_id}", params={"from_catalog": "false"})
 
+    def get_course_scores(self, course_id: int) -> dict[str, Any]:
+        """Получить баллы и прогресс по модулям/темам курса (/api/v1/view/course/{id}/scores)."""
+        try:
+            return self._get(f"api/v1/view/course/{course_id}/scores") or {}
+        except requests.RequestException:
+            return {}
+
+    def get_discipline_journal(self, discipline_id: int) -> list[dict[str, Any]]:
+        """Получить журнал оценок дисциплины (/api/v1/view/lms/journal/{id})."""
+        try:
+            raw = self._get(f"api/v1/view/lms/journal/{discipline_id}") or {}
+        except requests.RequestException:
+            return []
+        columns = raw.get("columns") if isinstance(raw, dict) else []
+        out: list[dict[str, Any]] = []
+        for col in columns or []:
+            if not isinstance(col, dict):
+                continue
+            marks = col.get("student_marks") or []
+            m0 = marks[0] if marks and isinstance(marks[0], dict) else {}
+            out.append(
+                {
+                    "id": col.get("id"),
+                    "title": str(col.get("title") or "Контроль").strip(),
+                    "type": str(col.get("type") or ""),
+                    "ects_limit": col.get("ects_limit"),
+                    "ects_mark": m0.get("ects_mark"),
+                    "text_mark": m0.get("text_mark"),
+                    "date": col.get("date") or "",
+                }
+            )
+        return out
+
+    def list_webinar_records(self, limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
+        """Список записей прошедших вебинаров (/api/v1/lms/records)."""
+        try:
+            raw = self._get("api/v1/lms/records", params={"limit": limit, "offset": offset}) or {}
+        except requests.RequestException:
+            return []
+        items = raw.get("data") if isinstance(raw, dict) else (raw if isinstance(raw, list) else [])
+        out: list[dict[str, Any]] = []
+        for r in items or []:
+            if not isinstance(r, dict):
+                continue
+            out.append(
+                {
+                    "id": r.get("id"),
+                    "title": str(r.get("title") or r.get("name") or "Запись вебинара").strip(),
+                    "date": str(r.get("date") or r.get("created_at") or ""),
+                    "url": str(r.get("url") or r.get("record_url") or ""),
+                    "discipline": str(r.get("discipline_title") or ""),
+                }
+            )
+        return out
+
+    def list_catalog_courses(
+        self,
+        search: str = "",
+        limit: int = 24,
+        offset: int = 0,
+        favorite_only: bool = False,
+    ) -> dict[str, Any]:
+        """Каталог курсов НГТУ (/courses?offset=0 -> /api/v1/catalog/courses)."""
+        q = search.strip().lower()
+        fetch_limit = 200 if q else limit
+        params: dict[str, Any] = {
+            "favorite_only": "true" if favorite_only else "false",
+            "limit": fetch_limit,
+            "offset": 0 if q else offset,
+        }
+
+        raw = self._get("api/v1/catalog/courses", params=params) or {}
+        items = (raw.get("data") if isinstance(raw, dict) else []) or []
+        total = int(
+            (
+                raw.get("pagination")
+                or raw.get("count")
+                or len(items)
+            )
+            if isinstance(raw, dict)
+            else len(items)
+        )
+
+        courses: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            cid = int(item["id"])
+            title = str(item.get("title") or f"Курс #{cid}").strip()
+            desc = html_to_text(str(item.get("description") or ""))
+            authors: list[str] = []
+            for entry in (item.get("coauthors") or item.get("authors") or []):
+                if not isinstance(entry, dict):
+                    continue
+                person = entry.get("author") if isinstance(entry.get("author"), dict) else entry
+                if person.get("last_name"):
+                    authors.append(
+                        f"{person.get('last_name', '')} {person.get('first_name', '')[:1]}.{person.get('patronymic', '')[:1]}.".strip()
+                    )
+            haystack = f"{title} {desc} {' '.join(authors)} {cid}".lower()
+            if q and q not in haystack:
+                continue
+            courses.append(
+                {
+                    "id": cid,
+                    "title": title,
+                    "description": desc[:400],
+                    "authors": authors,
+                    "weeks": item.get("count_study_weeks"),
+                    "education_form": str(item.get("education_form") or ""),
+                    "publication_type": str(item.get("publication_type") or ""),
+                    "url": f"{self.base_url}/course/{cid}/description",
+                }
+            )
+        return {"count": total, "courses": courses[:limit]}
+
+    def list_tests(self) -> dict[str, Any]:
+        """Список назначенных тестов (/tests) и тестовых тем внутри курсов студента."""
+        assigned: list[dict[str, Any]] = []
+        try:
+            raw = self._get(
+                "api/v1/test/assigntest/assignings",
+                params={
+                    "sort_by": "test_end_time",
+                    "sort_order": "desc",
+                    "offset": 0,
+                    "limit": 50,
+                },
+            ) or {}
+            for item in (raw.get("response_assignings") if isinstance(raw, dict) else []) or []:
+                if not isinstance(item, dict):
+                    continue
+                assigned.append(
+                    {
+                        "id": item.get("id") or item.get("assigning_id"),
+                        "test_id": item.get("test_id"),
+                        "title": str(item.get("test_title") or item.get("title") or "Тест").strip(),
+                        "start_time": str(item.get("test_start_time") or ""),
+                        "end_time": str(item.get("test_end_time") or ""),
+                        "score": item.get("score") or item.get("result"),
+                        "status": str(item.get("status") or ""),
+                        "url": f"{self.base_url}/tests",
+                    }
+                )
+        except requests.RequestException:
+            pass
+
+        course_tests: list[dict[str, Any]] = []
+        for c in self.list_courses():
+            cid = c["id"]
+            try:
+                c_data = self.get_course(cid)
+            except requests.RequestException:
+                continue
+            c_title = str(c_data.get("title") or c["title"]).strip()
+            for mod in c_data.get("modules") or []:
+                if mod.get("hidden"):
+                    continue
+                m_title = str(mod.get("title") or "").strip()
+                for th in mod.get("themes") or []:
+                    if th.get("hidden"):
+                        continue
+                    test_id = th.get("test_id")
+                    th_type = str(th.get("type") or "")
+                    th_title = str(th.get("title") or "").strip()
+                    if test_id or th_type == "test" or "тест" in th_title.lower() or "контрольн" in th_title.lower():
+                        tid = th.get("id")
+                        course_tests.append(
+                            {
+                                "course_id": cid,
+                                "course_title": c_title,
+                                "module_title": m_title,
+                                "theme_id": tid,
+                                "theme_title": th_title,
+                                "test_id": test_id,
+                                "type": "тест" if (test_id or th_type == "test") else "контрольная/задание",
+                                "url": f"{self.base_url}/course/{cid}/{tid}" if tid else f"{self.base_url}/course/{cid}",
+                            }
+                        )
+
+        return {"assigned_tests": assigned, "course_tests": course_tests}
+
+    def list_messages(self, limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
+        """Список диалогов в сообщениях (/messages -> /api/v1/lms/messages)."""
+        raw = self._get("api/v1/lms/messages", params={"limit": limit, "offset": offset}) or {}
+        items = (raw.get("data") if isinstance(raw, dict) else []) or []
+        dialogues: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            d_settings = item.get("dialogue_settings") or {}
+            conv = d_settings.get("conversant") or item.get("sender") or {}
+            conv_id = conv.get("id")
+            conv_name = (
+                f"{conv.get('last_name', '')} {conv.get('first_name', '')} {conv.get('patronymic', '')}".strip()
+                or f"Собеседник #{conv_id}"
+            )
+            content = item.get("content") or {}
+            msg_text = html_to_text(str(content.get("message_text") or ""))
+            files = content.get("files") or []
+            dialogues.append(
+                {
+                    "id": item.get("id"),
+                    "conversant_id": int(conv_id) if conv_id else None,
+                    "conversant_name": conv_name,
+                    "conversant_role": "Преподаватель" if conv.get("is_teacher") else "Пользователь",
+                    "last_message": msg_text,
+                    "date": str(content.get("date") or ""),
+                    "theme": str(content.get("theme") or ""),
+                    "count_unread": int(item.get("count_unread") or 0),
+                    "files": files,
+                    "url": f"{self.base_url}/messages",
+                }
+            )
+        return dialogues
+
+    def get_dialogue(self, conversant_id: int, limit: int = 30, offset: int = 0) -> list[dict[str, Any]]:
+        """Сообщения конкретного диалога (/api/v1/lms/messages/dialogue)."""
+        raw = (
+            self._get(
+                "api/v1/lms/messages/dialogue",
+                params={"conversant_id": conversant_id, "limit": limit, "offset": offset},
+            )
+            or {}
+        )
+        items = (raw.get("data") if isinstance(raw, dict) else []) or []
+        messages: list[dict[str, Any]] = []
+        for item in reversed(items):
+            if not isinstance(item, dict):
+                continue
+            sender = item.get("sender") or {}
+            sender_name = (
+                f"{sender.get('last_name', '')} {sender.get('first_name', '')[:1]}.{sender.get('patronymic', '')[:1]}.".strip()
+                or "Отправитель"
+            )
+            content = item.get("content") or {}
+            text = html_to_text(str(content.get("message_text") or ""))
+            messages.append(
+                {
+                    "id": item.get("id"),
+                    "sender_id": sender.get("id"),
+                    "sender_name": sender_name,
+                    "is_teacher": bool(sender.get("is_teacher")),
+                    "text": text,
+                    "date": str(content.get("date") or ""),
+                    "theme": str(content.get("theme") or ""),
+                    "files": content.get("files") or [],
+                }
+            )
+        return messages
+
+    def import_course_to_store(
+        self,
+        store: Any,
+        course_id: int,
+        course_name: str | None = None,
+        include_files: bool = True,
+        on_progress: Any = None,
+    ) -> list[Any]:
+        """Скачать все модули, темы и файлы курса и сохранить напрямую в MaterialStore."""
+        detected_title, items = self.extract_course_materials(course_id, include_files=include_files)
+        target_course = (course_name or detected_title).strip()
+        saved_sources: list[Any] = []
+        total = len(items)
+        for idx, it in enumerate(items, start=1):
+            if on_progress:
+                try:
+                    on_progress(idx, total, it.title)
+                except Exception:
+                    pass
+            source = store.add_source(
+                course=target_course,
+                title=it.title,
+                text=it.text,
+                url=it.url,
+            )
+            saved_sources.append(source)
+        store.reload()
+        return saved_sources
+
+    def import_control_event_to_store(
+        self,
+        store: Any,
+        discipline_title: str,
+        control_event: dict[str, Any],
+    ) -> list[Any]:
+        """Скачать условие и прикреплённые файлы контрольного мероприятия в MaterialStore."""
+        saved_sources: list[Any] = []
+        ce_name = str(control_event.get("name") or "Контрольное задание").strip()
+        ce_desc = str(control_event.get("description") or "").strip()
+        if len(ce_desc) >= 30:
+            s = store.add_source(
+                course=discipline_title,
+                title=f"{ce_name} — описание",
+                text=ce_desc,
+                url=f"{self.base_url}/education",
+            )
+            saved_sources.append(s)
+        for f_info in control_event.get("files") or []:
+            f_text = self._download_file_text(f_info)
+            if len(f_text) >= 40:
+                f_title = str(f_info.get("title") or "Файл").strip()
+                s = store.add_source(
+                    course=discipline_title,
+                    title=f"{ce_name}: {f_title}",
+                    text=f_text,
+                    url=str(f_info.get("url") or f"{self.base_url}/education"),
+                )
+                saved_sources.append(s)
+        store.reload()
+        return saved_sources
+
     def get_theme(self, theme_id: int) -> dict[str, Any]:
         return self._get(f"api/v1/view/course/theme/{theme_id}")
 
@@ -922,7 +1234,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--login", action="store_true", help="открыть браузер и войти вручную")
     parser.add_argument("--courses", action="store_true", help="список курсов (/courses/my и /education)")
     parser.add_argument("--disciplines", action="store_true", help="список дисциплин и заданий (/education)")
+    parser.add_argument("--journal", type=int, metavar="DISC_ID", help="журнал оценок дисциплины (/education)")
     parser.add_argument("--events", action="store_true", help="расписание вебинаров и лекций (/events)")
+    parser.add_argument("--catalog", nargs="?", const="", metavar="QUERY", help="каталог курсов НГТУ (/courses)")
+    parser.add_argument("--tests", action="store_true", help="назначенные тесты и тесты в курсах (/tests)")
+    parser.add_argument("--messages", action="store_true", help="диалоги и сообщения (/messages)")
     parser.add_argument("--links", metavar="URL", help="показать ссылки или структуру курса/страницы")
     parser.add_argument("--read", metavar="URL", help="прочитать страницу, курс или тему")
     parser.add_argument("--import", dest="import_url", metavar="URL", help="прочитать и сохранить в хранилище")
@@ -1005,14 +1321,82 @@ def main(argv: list[str] | None = None) -> int:
             print("Нужен вход. Выполни: python src/lms_reader.py --login")
             return 1
         events = api.list_events()
-        if not events:
-            print("В текущем месяце событий не найдено.")
+        records = api.list_webinar_records()
+        if not events and not records:
+            print("В текущем месяце событий и записей вебинаров не найдено.")
             return 0
-        print(f"События текущего месяца ({len(events)}):")
-        for ev in events:
-            t_str = f" {ev['time']}" if ev.get("time") else ""
-            d_str = f" [{ev['discipline']}]" if ev.get("discipline") else ""
-            print(f"  • {ev['day']}{t_str}{d_str}: {ev['title']}")
+        if events:
+            print(f"События текущего месяца ({len(events)}):")
+            for ev in events:
+                t_str = f" {ev['time']}" if ev.get("time") else ""
+                d_str = f" [{ev['discipline']}]" if ev.get("discipline") else ""
+                print(f"  • {ev['day']}{t_str}{d_str}: {ev['title']}")
+        if records:
+            print(f"\nЗаписи вебинаров ({len(records)}):")
+            for r in records:
+                print(f"  • {r['title']} ({r['date']}) {r['url']}")
+        return 0
+
+    # 4b. Журнал оценок дисциплины (--journal)
+    if args.journal:
+        if not api:
+            print("Нужен вход. Выполни: python src/lms_reader.py --login")
+            return 1
+        cols = api.get_discipline_journal(args.journal)
+        if not cols:
+            print(f"Журнал дисциплины #{args.journal} пуст или недоступен.")
+            return 0
+        print(f"Журнал оценок дисциплины #{args.journal} ({len(cols)} колонок):")
+        for col in cols:
+            mark = col.get("text_mark") or col.get("ects_mark") or "—"
+            lim = f" (макс. {col['ects_limit']})" if col.get("ects_limit") is not None else ""
+            print(f"  • {col['title']}{lim}: {mark}")
+        return 0
+
+    # 4c. Каталог курсов (--catalog)
+    if args.catalog is not None:
+        if not api:
+            print("Нужен вход. Выполни: python src/lms_reader.py --login")
+            return 1
+        cat = api.list_catalog_courses(search=args.catalog, limit=20)
+        courses = cat.get("courses") or []
+        print(f"Каталог курсов НГТУ (всего в базе: {cat.get('count', 0)}, показано: {len(courses)}):")
+        for c in courses:
+            auth = f" ({', '.join(c['authors'])})" if c.get("authors") else ""
+            print(f"  • #{c['id']} {c['title']}{auth}\n    {c['url']}")
+        return 0
+
+    # 4d. Тесты и контрольные (--tests)
+    if args.tests:
+        if not api:
+            print("Нужен вход. Выполни: python src/lms_reader.py --login")
+            return 1
+        t_data = api.list_tests()
+        assigned = t_data.get("assigned_tests") or []
+        c_tests = t_data.get("course_tests") or []
+        print(f"Назначенные сессии тестирования (/tests): {len(assigned)}")
+        for t in assigned:
+            print(f"  • {t['title']} [{t['status']}] балл: {t.get('score') or '—'}")
+        print(f"\nТесты и контрольные внутри курсов студента: {len(c_tests)}")
+        for ct in c_tests:
+            print(f"  • [{ct['course_title']}] {ct['module_title']} -> {ct['theme_title']} ({ct['type']})\n    {ct['url']}")
+        return 0
+
+    # 4e. Сообщения и диалоги (--messages)
+    if args.messages:
+        if not api:
+            print("Нужен вход. Выполни: python src/lms_reader.py --login")
+            return 1
+        dialogs = api.list_messages(limit=20)
+        if not dialogs:
+            print("Диалогов не найдено.")
+            return 0
+        print(f"Диалоги в DiSpace ({len(dialogs)}):")
+        for d in dialogs:
+            unread = f" [непрочитано: {d['count_unread']}]" if d.get("count_unread") else ""
+            snippet = (d.get("last_message") or "").replace("\n", " ")[:90]
+            print(f"  • [{d['conversant_id']}] {d['conversant_name']} ({d['conversant_role']}){unread}")
+            print(f"    {d['date']}: {snippet}")
         return 0
 
     # 5. Ссылки / структура курса или страницы (--links)

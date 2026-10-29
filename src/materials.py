@@ -12,14 +12,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
-import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = PROJECT_ROOT / "data" / "materials"
@@ -77,7 +77,12 @@ def slugify(text: str, max_len: int = 80) -> str:
     """Безопасное имя файла из произвольной строки (кириллица сохраняется)."""
     cleaned = re.sub(r"[^\w\s\-]+", "", text, flags=re.UNICODE)
     cleaned = re.sub(r"[\s_]+", "-", cleaned).strip("-").lower()
-    return (cleaned or "material")[:max_len]
+    if not cleaned:
+        return "material"
+    if len(cleaned) <= max_len:
+        return cleaned
+    short_hash = hashlib.sha1(cleaned.encode("utf-8")).hexdigest()[:6]
+    return f"{cleaned[: max_len - 7].rstrip('-')}-{short_hash}"
 
 
 def chunk_text(text: str, size: int = 1500, overlap: int = 180) -> list[str]:
@@ -113,7 +118,7 @@ def chunk_text(text: str, size: int = 1500, overlap: int = 180) -> list[str]:
 
 
 class MaterialStore:
-    """Диск + индекс + BM25."""
+    """Диск + индекс + BM25 с автоматической синхронизацией при изменениях на диске."""
 
     def __init__(self, root: str | Path | None = None):
         self.root = Path(root) if root else DEFAULT_ROOT
@@ -125,15 +130,36 @@ class MaterialStore:
 
         self.sources: dict[str, Source] = {}
         self.chunks: dict[str, Chunk] = {}
+        self._last_mtime_ns: int = 0
         self._load()
 
     # ------------------------------------------------------------ хранение
 
+    def _disk_mtime_ns(self) -> int:
+        try:
+            return self.index_path.stat().st_mtime_ns if self.index_path.exists() else 0
+        except OSError:
+            return 0
+
+    def reload(self) -> None:
+        """Принудительно перечитать индекс с диска."""
+        self._load()
+
+    def _sync_if_changed(self) -> None:
+        """Если index.json обновился другим процессом (например, CLI), перечитать его."""
+        current_mtime = self._disk_mtime_ns()
+        if current_mtime != self._last_mtime_ns:
+            self._load()
+
     def _load(self) -> None:
+        self.sources.clear()
+        self.chunks.clear()
         if not self.index_path.exists():
+            self._last_mtime_ns = 0
             return
         try:
             data = json.loads(self.index_path.read_text(encoding="utf-8"))
+            self._last_mtime_ns = self._disk_mtime_ns()
         except (json.JSONDecodeError, OSError):
             return
         for raw in data.get("sources", []):
@@ -152,6 +178,7 @@ class MaterialStore:
         tmp = self.index_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(self.index_path)
+        self._last_mtime_ns = self._disk_mtime_ns()
 
     # ------------------------------------------------------------- контент
 
@@ -164,9 +191,27 @@ class MaterialStore:
         chunk_size: int = 1500,
         overlap: int = 180,
     ) -> Source:
-        source_id = slugify(f"{course}-{title}")[:80]
+        self._sync_if_changed()
+        course = course.strip()
+        title = title.strip()
+        source_id = slugify(f"{course}-{title}")
+
+        # Если такой материал (курс + название) уже есть — обновляем его на месте без дублей.
+        existing_id: str | None = None
         if source_id in self.sources:
-            source_id = f"{source_id}-{int(time.time()) % 10000}"
+            existing_id = source_id
+        else:
+            for sid, existing in self.sources.items():
+                if existing.course.lower() == course.lower() and existing.title.lower() == title.lower():
+                    existing_id = sid
+                    break
+
+        if existing_id:
+            old_source = self.sources.pop(existing_id, None)
+            if old_source:
+                for cid in old_source.chunk_ids:
+                    self.chunks.pop(cid, None)
+            source_id = existing_id
 
         raw_path = self.sources_dir / f"{source_id}.txt"
         raw_path.write_text(text, encoding="utf-8")
@@ -198,6 +243,7 @@ class MaterialStore:
         return source
 
     def remove_source(self, source_id: str) -> bool:
+        self._sync_if_changed()
         source = self.sources.pop(source_id, None)
         if not source:
             return False
@@ -206,6 +252,21 @@ class MaterialStore:
         (self.sources_dir / f"{source_id}.txt").unlink(missing_ok=True)
         self._save()
         return True
+
+    def get_source_text(self, source_id: str) -> str:
+        self._sync_if_changed()
+        raw_path = self.sources_dir / f"{source_id}.txt"
+        if raw_path.exists():
+            try:
+                return raw_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                pass
+        source = self.sources.get(source_id)
+        if not source:
+            return ""
+        return "\n\n".join(
+            self.chunks[cid].text for cid in source.chunk_ids if cid in self.chunks
+        )
 
     # --------------------------------------------------------------- поиск
 
@@ -217,6 +278,7 @@ class MaterialStore:
         min_score: float = 0.0,
     ) -> list[tuple[Chunk, float]]:
         """BM25 по фрагментам. Возвращает (фрагмент, вес)."""
+        self._sync_if_changed()
         candidates = [
             c for c in self.chunks.values() if course is None or c.course == course
         ]
@@ -263,9 +325,15 @@ class MaterialStore:
         scored.sort(key=lambda item: item[1], reverse=True)
         return scored[:k]
 
-    def context_for(self, query: str, k: int = 5, max_chars: int = 6000) -> str:
+    def context_for(
+        self,
+        query: str,
+        k: int = 5,
+        max_chars: int = 6000,
+        course: str | None = None,
+    ) -> str:
         """Собрать контекст с маркерами ссылок для промпта."""
-        hits = self.search(query, k=k)
+        hits = self.search(query, k=k, course=course)
         if not hits:
             return ""
         blocks, used = [], 0
@@ -280,13 +348,16 @@ class MaterialStore:
     # ------------------------------------------------------------ конспект
 
     def list_courses(self) -> list[str]:
+        self._sync_if_changed()
         return sorted({s.course for s in self.sources.values()})
 
     def list_sources(self, course: str | None = None) -> list[Source]:
+        self._sync_if_changed()
         items = [s for s in self.sources.values() if course is None or s.course == course]
         return sorted(items, key=lambda s: (s.course, s.title))
 
     def stats(self) -> dict[str, Any]:
+        self._sync_if_changed()
         return {
             "sources": len(self.sources),
             "chunks": len(self.chunks),

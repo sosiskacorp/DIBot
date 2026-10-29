@@ -13,6 +13,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Sequence
 
 from llm_client import ChatResult, LLMClient, LLMError
@@ -48,6 +49,15 @@ PRACTICE_SYSTEM = """Ты составляешь тренировочные за
 - ответ должен быть однозначным и проверяемым;
 - condition самодостаточен: никаких «см. выше» и ссылок на рисунки."""
 
+VISION_EXTRACT_SYSTEM = """Ты — модуль оптического распознавания учебных материалов и задач.
+Твоя задача — максимально точно переписать весь текст, условия задач, таблицы и математические
+формулы с прикреплённого изображения.
+Правила:
+1. Все математические формулы, матрицы, пределы, интегралы и уравнения записывай в LaTeX ($...$ или $$...$$).
+2. Сохраняй точные числа, знаки и индексы. Не пропускай условия.
+3. Если на фото изображена схема, график или чертёж — подробно опиши его структуру и данные.
+4. Выводи только распознанное условие и данные без лишних вступлений."""
+
 
 @dataclass
 class Answer:
@@ -60,13 +70,17 @@ class Answer:
     verification: VerificationReport | None = None
     context_used: str = "нет"
     thinking: str = ""
+    extracted_image_text: str = ""
 
     @property
     def verdict(self) -> str:
         return self.verification.verdict if self.verification else "не проверялось"
 
     def as_text(self) -> str:
-        lines = [self.text, "", "---"]
+        lines = []
+        if self.extracted_image_text:
+            lines.extend(["**Распознано с фото:**", self.extracted_image_text, ""])
+        lines.extend([self.text, "", "---"])
         badges = [f"модель: {self.model}", f"задача: {self.task}", f"контекст: {self.context_used}"]
         if self.sources:
             badges.append(f"источники: {len(self.sources)}")
@@ -100,46 +114,101 @@ class Tutor:
         verify: bool | None = None,
         history: Sequence[dict[str, str]] | None = None,
         task: str | None = None,
+        images: Sequence[str | Path | bytes] | None = None,
     ) -> Answer:
         started = time.perf_counter()
-        resolved_task = task or classify(question)
+        clean_question = (question or "").strip() or "Разбери и реши задание на изображении."
+        extracted_image_text = ""
+        vision_model_used = ""
+
+        # Шаг 1: если прикреплены фото, распознаём текст и формулы через vision-модель (qwen3-vl)
+        if images:
+            vision_prompt = (
+                "Перепиши условие задачи, текст и все формулы (в LaTeX) с изображения."
+                if not question.strip()
+                else f"Запрос пользователя: {clean_question}\n\nПерепиши весь текст, формулы (в LaTeX) и данные с изображения, необходимые для ответа."
+            )
+            vision_res = self.llm.chat(
+                [
+                    {"role": "system", "content": VISION_EXTRACT_SYSTEM},
+                    {"role": "user", "content": vision_prompt},
+                ],
+                task="vision",
+                images=images,
+            )
+            extracted_image_text = vision_res.text.strip()
+            vision_model_used = vision_res.model
+
+        # Совмещаем вопрос пользователя и распознанный текст с фото для поиска и классификации
+        combined_query = (
+            f"{clean_question}\n{extracted_image_text}".strip()
+            if extracted_image_text
+            else clean_question
+        )
+
+        if task and task != "vision":
+            resolved_task = task
+        else:
+            resolved_task = classify(combined_query, has_images=False)
 
         parts: list[str] = []
         sources: list[str] = []
         used = "нет"
 
-        notes_context = self.store.context_for(question, k=4)
+        if extracted_image_text:
+            parts.append("РАСПОЗНАННЫЙ ТЕКСТ И ФОРМУЛЫ С ФОТО:\n" + extracted_image_text)
+            used = "фото"
+
+        notes_context = self.store.context_for(combined_query, k=4, course=course)
         if notes_context:
             parts.append("КОНТЕКСТ ИЗ МАТЕРИАЛОВ:\n" + notes_context)
-            used = "материалы"
+            used = "фото + материалы" if extracted_image_text else "материалы"
             sources.extend(
                 f"{chunk.title} (фр. {chunk.index + 1})"
-                for chunk, _ in self.store.search(question, k=4)
+                for chunk, _ in self.store.search(combined_query, k=4, course=course)
             )
 
         web_results: list[SearchResult] = []
         if use_web:
             try:
-                web_context, web_results = self.search.context(question, limit=4)
+                web_context, web_results = self.search.context(combined_query, limit=4)
                 if web_context:
                     parts.append("ВЕБ-РЕЗУЛЬТАТЫ (проверяй критически):\n" + web_context)
-                    used = "материалы + веб" if notes_context else "веб"
+                    used = f"{used} + веб" if used != "нет" else "веб"
             except SearchError as exc:
                 parts.append(f"(веб-поиск недоступен: {exc})")
 
         prompt_parts = []
         if parts:
             prompt_parts.append("\n\n".join(parts))
-        prompt_parts.append(f"ВОПРОС:\n{question}")
+        prompt_parts.append(f"ВОПРОС:\n{clean_question}")
         user_content = "\n\n".join(prompt_parts)
 
         messages: list[dict[str, str]] = [{"role": "system", "content": TUTOR_SYSTEM}]
         if history:
-            messages.extend(dict(m) for m in history[-6:])
+            for m in history[-8:]:
+                role = str(m.get("role") or "user")
+                content = str(m.get("content") or "").strip()
+                if role in ("user", "assistant") and content:
+                    messages.append({"role": role, "content": content})
         messages.append({"role": "user", "content": user_content})
 
-        result: ChatResult = self.llm.chat(messages, task=resolved_task, text_hint=question)
+        # Если пользователь явно выбрал режим "vision" без перенаправления в math/code,
+        # передаём также сами изображения в финальный запрос.
+        pass_images = images if task == "vision" else None
+        result: ChatResult = self.llm.chat(
+            messages,
+            task=resolved_task if not pass_images else "vision",
+            text_hint=combined_query,
+            images=pass_images,
+        )
         answer_text = _strip_prompt_echo(result.text, TUTOR_SYSTEM)
+
+        model_badge = (
+            f"{vision_model_used} -> {result.model}"
+            if vision_model_used and vision_model_used != result.model
+            else result.model
+        )
 
         should_verify = (
             resolved_task in self.verify_tasks if verify is None else verify
@@ -147,21 +216,22 @@ class Tutor:
         report = None
         if should_verify and answer_text:
             report = self.verifier.verify(
-                problem=question,
+                problem=combined_query,
                 solution=answer_text,
                 solver_model=result.model,
             )
 
         return Answer(
-            question=question,
+            question=clean_question,
             text=answer_text,
-            task=resolved_task,
-            model=result.model,
+            task=resolved_task if not images else f"vision+{resolved_task}",
+            model=model_badge,
             seconds=round(time.perf_counter() - started, 2),
             sources=_dedupe(sources),
             verification=report,
             context_used=used,
             thinking=result.thinking,
+            extracted_image_text=extracted_image_text,
         )
 
     # ------------------------------------------------------------ тренажёр
@@ -179,7 +249,7 @@ class Tutor:
         Это замена «прохождению теста»: те же типы задач, но ответы проверяются
         заранее, чтобы студент учился на корректных эталонах.
         """
-        context = self.store.context_for(topic, k=3, max_chars=3500)
+        context = self.store.context_for(topic, k=3, max_chars=3500, course=course)
         prompt = f"Тема: {topic}\nУровень: {difficulty}\nКоличество заданий: {count}\n"
         if context:
             prompt += f"\nОпирайся на материалы:\n{context}\n"

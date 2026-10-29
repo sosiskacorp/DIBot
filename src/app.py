@@ -2,42 +2,55 @@
 
     streamlit run src/app.py
 
-Вкладки: чат, материалы, конспекты, тренажёр, модели.
-Браузерная читалка запускается отдельным процессом — Playwright несовместим
-с потоком, в котором Streamlit исполняет скрипт.
+Вкладки:
+  1. 💬 Чат — полноценный многошаговый диалог с прикреплением фото (qwen3-vl),
+     поиском по базе лекций (RAG), решением задач (deepseek-r1 / qwen2.5-coder) и SymPy-проверкой.
+  2. 🎓 DiSpace НГТУ — все 6 разделов личного кабинета НГТУ (Мои курсы, Дисциплины и журнал,
+     События и вебинары, Каталог курсов, Тесты и контрольные, Сообщения) с прямым импортом в базу.
+  3. 📚 Материалы — управление локальной базой знаний, предпросмотр текста, ручная загрузка PDF/DOCX/MD.
+  4. 📝 Конспекты — генерация проверяемых конспектов со ссылками [#N] на фрагменты лекций.
+  5. 🧪 Тренажёр — генерация тренировочных вариантов с автоматической проверкой эталонных решений.
+  6. ⚙️ Модели — мониторинг Ollama, маршрутизация задач и диагностика.
 """
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
+from typing import Any
 
+import requests
 import streamlit as st
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import requests  # noqa: E402
-
 from ingest import extract_docx_bytes, extract_pdf_bytes  # noqa: E402
-from llm_client import LLMClient, LLMError  # noqa: E402
-from lms_reader import get_api_client  # noqa: E402
-from materials import MaterialStore  # noqa: E402
+from llm_client import LLMError  # noqa: E402
+from lms_reader import (  # noqa: E402
+    CATALOG_URL,
+    EDUCATION_URL,
+    EVENTS_URL,
+    MESSAGES_URL,
+    MY_COURSES_URL,
+    TESTS_URL,
+    LoginRequired,
+    get_api_client,
+    parse_dispace_target,
+)
+from materials import MaterialStore, slugify  # noqa: E402
 from notes import NoteBuilder  # noqa: E402
-from tutor import Tutor  # noqa: E402
+from tutor import Answer, Tutor  # noqa: E402
 
-st.set_page_config(page_title="DIBot — учебный ассистент", page_icon="🎓", layout="wide")
+st.set_page_config(
+    page_title="DIBot — учебный ассистент НГТУ",
+    page_icon="🎓",
+    layout="wide",
+)
 
 
 # --------------------------------------------------------------- ресурсы
-
-
-@st.cache_resource(show_spinner=False)
-def get_tutor() -> Tutor:
-    return Tutor()
 
 
 @st.cache_resource(show_spinner=False)
@@ -45,11 +58,23 @@ def get_store() -> MaterialStore:
     return MaterialStore()
 
 
-def ollama_status() -> dict:
-    """Быстрый статус сервера и загруженных моделей (без запуска модели)."""
+@st.cache_resource(show_spinner=False)
+def get_tutor() -> Tutor:
+    return Tutor(store=get_store())
+
+
+def sync_materials() -> MaterialStore:
+    """Перечитать индекс материалов с диска, чтобы импортированные курсы сразу появлялись в UI."""
+    store = get_store()
+    store.reload()
+    return store
+
+
+def ollama_status() -> dict[str, Any]:
+    """Быстрый статус сервера Ollama и загруженных в VRAM моделей."""
     try:
-        tags = requests.get("http://localhost:11434/api/tags", timeout=4).json()
-        ps = requests.get("http://localhost:11434/api/ps", timeout=4).json()
+        tags = requests.get("http://localhost:11434/api/tags", timeout=3).json()
+        ps = requests.get("http://localhost:11434/api/ps", timeout=3).json()
     except requests.RequestException as exc:
         return {"ok": False, "error": str(exc), "models": [], "loaded": []}
     loaded = [
@@ -70,124 +95,781 @@ def ollama_status() -> dict:
 
 def render_verification(report) -> None:
     colors = {"confirmed": "✅", "disputed": "⛔", "unverified": "⚠️"}
+    labels = {
+        "confirmed": "подтверждено",
+        "disputed": "обнаружено расхождение",
+        "unverified": "не проверено",
+    }
     icon = colors.get(report.verdict, "•")
-    with st.expander(f"{icon} Проверка решения — {report.verdict} ({report.confidence:.0%})", expanded=report.verdict != "confirmed"):
+    label = labels.get(report.verdict, report.verdict)
+    with st.expander(
+        f"{icon} Проверка решения — {label} ({report.confidence:.0%})",
+        expanded=report.verdict == "disputed",
+    ):
         for check in report.checks:
-            mark = {"pass": "✅", "fail": "❌", "skipped": "➖", "error": "⚠️"}.get(check.status, "•")
+            mark = {"pass": "✅", "fail": "❌", "skipped": "➖", "error": "⚠️"}.get(
+                check.status, "•"
+            )
             st.markdown(f"{mark} **{check.layer}** — {check.detail}")
 
 
-# ------------------------------------------------------------------ шапка
+def render_assistant_turn(turn: dict[str, Any]) -> None:
+    """Отрисовать сообщение ассистента со всеми деталями (фото-OCR, ход мыслей, проверка)."""
+    ans: Answer | None = turn.get("answer")
+    if ans is None:
+        st.markdown(turn.get("content", ""))
+        return
 
+    if ans.extracted_image_text:
+        with st.expander("📷 Распознано с прикреплённого фото (qwen3-vl)", expanded=False):
+            st.markdown(ans.extracted_image_text)
+
+    if ans.thinking:
+        with st.expander("💭 Ход рассуждений модели", expanded=False):
+            st.caption(ans.thinking)
+
+    st.markdown(ans.text)
+
+    badges = [
+        f"модель: `{ans.model}`",
+        f"задача: `{ans.task}`",
+        f"контекст: **{ans.context_used}**",
+        f"время: {ans.seconds:.1f} с",
+    ]
+    st.caption(" · ".join(badges))
+
+    if ans.sources:
+        st.caption("📚 Источники: " + " · ".join(ans.sources[:5]))
+
+    if ans.verification:
+        render_verification(ans.verification)
+
+
+# ------------------------------------------------------------------ сайдбар
+
+store = sync_materials()
+stats = store.stats()
 status = ollama_status()
+dispace_api = get_api_client(auto_refresh=False)
+
 with st.sidebar:
     st.title("🎓 DIBot")
-    st.caption("Учебный ассистент: конспекты, разбор задач, самопроверка")
+    st.caption("Учебный ИИ-ассистент студента НГТУ")
+
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+        st.metric("Курсов в базе", len(stats["courses"]))
+    with col_s2:
+        st.metric("Фрагментов", stats["chunks"])
 
     if status["ok"]:
-        st.success(f"Ollama: {len(status['models'])} моделей")
+        st.success(f"Ollama: {len(status['models'])} моделей готово")
     else:
         st.error("Ollama не отвечает")
         st.caption(status.get("error", ""))
 
     if status["loaded"]:
-        st.markdown("**В памяти:**")
         for item in status["loaded"]:
-            st.caption(
-                f"{item['name']} · {item['size_gb']} ГБ · {item['processor'] or '—'}"
-            )
+            st.caption(f"⚡ В памяти: `{item['name']}` ({item['size_gb']} ГБ)")
+
+    if dispace_api:
+        st.success("DiSpace НГТУ: сессия активна")
+    else:
+        st.warning("DiSpace НГТУ: нужен вход")
 
     st.divider()
-    st.caption("Модели выбираются автоматически по типу задачи.")
+    st.markdown("**Параметры чата**")
+    course_options = ["Все курсы"] + store.list_courses()
+    selected_chat_course = st.selectbox(
+        "Фильтр по курсу",
+        course_options,
+        help="Ограничить поиск по материалам выбранной дисциплиной",
+    )
+    task_mode_options = {
+        "Авто (по запросу)": None,
+        "Математика (deepseek-r1)": "math",
+        "Диалог / теория (qwen3.5)": "chat",
+        "Код / Python (qwen2.5-coder)": "code",
+        "LaTeX-оформление": "latex",
+        "Только зрение (qwen3-vl)": "vision",
+    }
+    selected_task_label = st.selectbox("Режим модели", list(task_mode_options.keys()))
+    forced_task = task_mode_options[selected_task_label]
 
-tabs = st.tabs(["💬 Чат", "📚 Материалы", "📝 Конспекты", "🧪 Тренажёр", "⚙️ Модели"])
+    use_web = st.toggle("🌐 Веб-поиск (SearXNG)", value=False)
+    do_verify = st.toggle("✅ Проверять решения (SymPy + LLM)", value=True)
 
-# -------------------------------------------------------------------- чат
-
-with tabs[0]:
-    st.subheader("Спросить по учёбе")
-
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-
-    with st.form("ask_form", clear_on_submit=False):
-        question = st.text_area(
-            "Вопрос или задача",
-            height=110,
-            placeholder="Например: реши систему 2x + y = 5, x + 3y = 10 методом Крамера",
-        )
-        col1, col2, col3 = st.columns([1, 1, 1])
-        with col1:
-            use_web = st.toggle("Веб-поиск", value=False)
-        with col2:
-            do_verify = st.toggle("Проверять решение", value=True)
-        with col3:
-            courses = ["все"] + get_store().list_courses()
-            course_filter = st.selectbox("Курс", courses)
-
-        submitted = st.form_submit_button("Решить", type="primary", width="stretch")
-
-    if submitted and question.strip():
-        tutor = get_tutor()
-        with st.spinner("Думаю…"):
-            try:
-                answer = tutor.ask(
-                    question.strip(),
-                    course=None if course_filter == "все" else course_filter,
-                    use_web=use_web,
-                    verify=do_verify,
-                )
-            except LLMError as exc:
-                st.error(f"Модель недоступна: {exc}")
-            else:
-                st.session_state.messages.insert(0, answer)
-
-    for answer in st.session_state.messages[:6]:
-        with st.container(border=True):
-            st.caption(f"❓ {answer.question}")
-            st.markdown(answer.text)
-            meta = (
-                f"модель: `{answer.model}` · задача: `{answer.task}` · "
-                f"контекст: {answer.context_used} · {answer.seconds:.0f} с"
-            )
-            st.caption(meta)
-            if answer.sources:
-                st.caption("Источники: " + "; ".join(answer.sources[:4]))
-            if answer.verification:
-                render_verification(answer.verification)
-
-    if st.session_state.messages and st.button("Очистить историю"):
-        st.session_state.messages = []
+    if st.button("🗑️ Очистить диалог", width="stretch"):
+        st.session_state.chat_turns = []
         st.rerun()
 
-# -------------------------------------------------------------- материалы
+
+tabs = st.tabs(
+    [
+        "💬 Чат",
+        "🎓 DiSpace НГТУ",
+        "📚 Материалы",
+        "📝 Конспекты",
+        "🧪 Тренажёр",
+        "⚙️ Модели",
+    ]
+)
+
+
+# ===================================================================== 1. ЧАТ
+
+with tabs[0]:
+    if "chat_turns" not in st.session_state:
+        st.session_state.chat_turns = []
+
+    # Приветственный экран и быстрые подсказки, когда чат пуст
+    if not st.session_state.chat_turns:
+        st.markdown("### 💬 Учебный чат с поддержкой фото, формул и проверки")
+        st.caption(
+            "Задай вопрос по лекциям, отправь условие задачи или **прикрепи скан/фото тетради** "
+            "прямо в поле ввода внизу (иконка скрепки). Фото распознаётся моделью `qwen3-vl:8b`, "
+            "задача решается с опорой на твои материалы из DiSpace и проверяется через SymPy."
+        )
+        suggestions = [
+            "Реши систему 2x + y = 5, x + 3y = 10 методом Крамера и проверь ответ",
+            "Что такое предел числовой последовательности по материалам курса?",
+            "Как в линейной алгебре определяются коллинеарные и компланарные векторы?",
+            "Какие задания входят в контрольную работу по линейной алгебре?",
+        ]
+        picked_suggestion = st.pills(
+            "Примеры запросов:",
+            suggestions,
+            selection_mode="single",
+            label_visibility="collapsed",
+        )
+    else:
+        picked_suggestion = None
+
+    # Отрисовка истории сообщений
+    chat_container = st.container()
+    with chat_container:
+        for turn in st.session_state.chat_turns:
+            with st.chat_message(turn["role"]):
+                if turn["role"] == "user":
+                    if turn.get("images"):
+                        img_cols = st.columns(min(len(turn["images"]), 3))
+                        for idx, img_bytes in enumerate(turn["images"]):
+                            with img_cols[idx % len(img_cols)]:
+                                st.image(img_bytes, width=280)
+                    if turn.get("content"):
+                        st.markdown(turn["content"])
+                else:
+                    render_assistant_turn(turn)
+
+    # Поле ввода чата с прикреплением фотографий
+    chat_submission = st.chat_input(
+        "Напиши вопрос, задачу или прикрепи фото задания (PNG, JPG, WEBP)…",
+        accept_file="multiple",
+        file_type=["png", "jpg", "jpeg", "webp"],
+    )
+
+    user_text = ""
+    attached_images: list[bytes] = []
+
+    if chat_submission is not None:
+        if isinstance(chat_submission, str):
+            user_text = chat_submission.strip()
+        else:
+            user_text = (getattr(chat_submission, "text", "") or "").strip()
+            for f_obj in getattr(chat_submission, "files", None) or []:
+                attached_images.append(bytes(f_obj.getvalue()))
+    elif picked_suggestion:
+        user_text = picked_suggestion
+
+    if user_text or attached_images:
+        display_text = user_text or "📷 Разбери и реши задание на прикреплённом фото."
+
+        # Собираем историю предыдущих реплик для многошагового контекста
+        history_messages: list[dict[str, str]] = []
+        for prev in st.session_state.chat_turns[-8:]:
+            role = prev["role"]
+            if role == "user":
+                content = prev.get("content") or ""
+            else:
+                ans_obj: Answer | None = prev.get("answer")
+                content = ans_obj.text if ans_obj else (prev.get("content") or "")
+            if content:
+                history_messages.append({"role": role, "content": content})
+
+        st.session_state.chat_turns.append(
+            {
+                "role": "user",
+                "content": display_text,
+                "images": attached_images,
+            }
+        )
+
+        with chat_container:
+            with st.chat_message("user"):
+                if attached_images:
+                    img_cols = st.columns(min(len(attached_images), 3))
+                    for idx, img_bytes in enumerate(attached_images):
+                        with img_cols[idx % len(img_cols)]:
+                            st.image(img_bytes, width=280)
+                st.markdown(display_text)
+
+            with st.chat_message("assistant"):
+                spinner_msg = (
+                    "Распознаю фото (qwen3-vl), ищу в материалах и решаю задачу…"
+                    if attached_images
+                    else "Ищу в материалах, решаю и проверяю ответ…"
+                )
+                with st.spinner(spinner_msg):
+                    try:
+                        tutor = get_tutor()
+                        tutor.store.reload()
+                        answer = tutor.ask(
+                            question=user_text,
+                            course=None if selected_chat_course == "Все курсы" else selected_chat_course,
+                            use_web=use_web,
+                            verify=do_verify,
+                            history=history_messages,
+                            task=forced_task,
+                            images=attached_images if attached_images else None,
+                        )
+                    except LLMError as exc:
+                        st.error(f"Ошибка обращения к модели: {exc}")
+                    else:
+                        assistant_turn = {
+                            "role": "assistant",
+                            "content": answer.text,
+                            "answer": answer,
+                        }
+                        st.session_state.chat_turns.append(assistant_turn)
+                        render_assistant_turn(assistant_turn)
+
+
+# ============================================================ 2. DISPACE НГТУ
 
 with tabs[1]:
-    st.subheader("Материалы для обучения")
-    store = get_store()
+    st.subheader("🎓 Интеграция с DiSpace НГТУ (только чтение)")
+    st.caption(
+        "Все 6 разделов личного кабинета студента НГТУ. Пароль не хранится: используется "
+        "локальная сессия браузера (`authToken` и SSO Keycloak). Скачанные курсы мгновенно попадают во вкладку «Материалы»."
+    )
+
+    top_c1, top_c2, top_c3 = st.columns([2, 1, 1])
+    with top_c1:
+        if dispace_api:
+            st.success("✅ Подключено к dispace.nstu.ru (JWT-токен активен)")
+        else:
+            st.warning("⚠️ Сессия не активна. Нажми «Войти через браузер» или «Обновить по SSO».")
+    with top_c2:
+        if st.button("🔄 Обновить токен по SSO", width="stretch"):
+            with st.spinner("Обновляю токен через сохранённую SSO-сессию НГТУ…"):
+                refreshed = get_api_client(auto_refresh=True)
+            if refreshed:
+                st.success("Токен успешно обновлён!")
+                st.rerun()
+            else:
+                st.warning("Автообновление не сработало — нужен вход в окне браузера.")
+    with top_c3:
+        if st.button("🔑 Войти через браузер", width="stretch"):
+            subprocess.Popen(
+                [sys.executable, str(PROJECT_ROOT / "src" / "lms_reader.py"), "--login"],
+                cwd=str(PROJECT_ROOT),
+            )
+            st.info("Открылось окно браузера. Войди в DiSpace, затем обнови страницу.")
+
+    dispace_section = st.segmented_control(
+        "Раздел DiSpace НГТУ",
+        options=[
+            "📘 Мои курсы",
+            "🏛️ Дисциплины и журнал",
+            "📅 События и вебинары",
+            "🗂️ Каталог курсов",
+            "🧪 Тесты и контрольные",
+            "✉️ Сообщения",
+        ],
+        default="📘 Мои курсы",
+        label_visibility="collapsed",
+    )
+
+    if not dispace_api:
+        st.info("Войди в DiSpace НГТУ кнопкой выше, чтобы просматривать разделы и скачивать курсы.")
+    else:
+        # ----------------------------------------------------- 2.1 Мои курсы
+        if dispace_section == "📘 Мои курсы":
+            st.markdown(f"#### 📘 Мои курсы ([открыть в DiSpace]({MY_COURSES_URL}))")
+            try:
+                my_courses = dispace_api.list_courses()
+            except LoginRequired as exc:
+                st.error(str(exc))
+                my_courses = []
+
+            col_mc1, col_mc2 = st.columns([3, 2])
+            with col_mc1:
+                if not my_courses:
+                    st.info("Список курсов пуст.")
+                for c in my_courses:
+                    cid = c["id"]
+                    c_title = c["title"]
+                    disc_badge = f" · дисциплина: **{c['discipline']}**" if c.get("discipline") else ""
+                    already_in_store = len(store.list_sources(c.get("discipline") or c_title)) > 0 or len(store.list_sources(c_title)) > 0
+                    status_icon = "✅ В базе" if already_in_store else "📥 Не скачан"
+
+                    with st.container(border=True):
+                        st.markdown(f"**#{cid} — {c_title}** ({status_icon}){disc_badge}")
+                        st.caption(f"Ссылка: {c['url']}")
+
+                        b_col1, b_col2 = st.columns([1, 1])
+                        with b_col1:
+                            if st.button(
+                                "📥 Скачать курс в Материалы",
+                                key=f"imp_course_{cid}",
+                                type="primary",
+                                width="stretch",
+                            ):
+                                target_course_name = c.get("discipline") or c_title
+                                prog = st.progress(0.0, text=f"Чтение модулей курса «{c_title}»…")
+
+                                def _cb(idx: int, total: int, item_title: str) -> None:
+                                    prog.progress(
+                                        idx / max(total, 1),
+                                        text=f"Сохраняю ({idx}/{total}): {item_title[:60]}",
+                                    )
+
+                                try:
+                                    saved = dispace_api.import_course_to_store(
+                                        store,
+                                        course_id=cid,
+                                        course_name=target_course_name,
+                                        include_files=True,
+                                        on_progress=_cb,
+                                    )
+                                    get_tutor.clear()
+                                    prog.progress(1.0, text="Готово!")
+                                    st.success(
+                                        f"Курс «{target_course_name}» загружен в Материалы! "
+                                        f"Добавлено/обновлено источников: {len(saved)}."
+                                    )
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(f"Ошибка при импорте курса: {exc}")
+
+                        with b_col2:
+                            if st.button(
+                                "🔍 Показать структуру и баллы",
+                                key=f"struct_course_{cid}",
+                                width="stretch",
+                            ):
+                                st.session_state["inspect_course_id"] = cid
+
+            with col_mc2:
+                st.markdown("**Импорт по прямой ссылке или ID**")
+                with st.form("direct_dispace_import"):
+                    direct_url = st.text_input(
+                        "Ссылка на курс или тему DiSpace",
+                        placeholder="https://dispace.nstu.ru/course/3121/32823",
+                    )
+                    direct_course_name = st.text_input(
+                        "Название курса в базе (необязательно)",
+                        placeholder="Математический анализ",
+                    )
+                    direct_submit = st.form_submit_button(
+                        "Скачать в Материалы", type="primary", width="stretch"
+                    )
+                if direct_submit and direct_url.strip():
+                    target_info = parse_dispace_target(direct_url.strip())
+                    try:
+                        if target_info["kind"] == "course":
+                            saved = dispace_api.import_course_to_store(
+                                store,
+                                course_id=target_info["course_id"],
+                                course_name=direct_course_name.strip() or None,
+                                include_files=True,
+                            )
+                            get_tutor.clear()
+                            st.success(f"Импортировано источников курса: {len(saved)}")
+                            st.rerun()
+                        elif target_info["kind"] == "theme":
+                            c_obj = dispace_api.get_course(target_info["course_id"])
+                            c_name = (
+                                direct_course_name.strip()
+                                or str(c_obj.get("title") or f"Курс {target_info['course_id']}").strip()
+                            )
+                            items = dispace_api.extract_theme_materials(
+                                target_info["course_id"], target_info["theme_id"], include_files=True
+                            )
+                            for it in items:
+                                store.add_source(course=c_name, title=it.title, text=it.text, url=it.url)
+                            store.reload()
+                            get_tutor.clear()
+                            st.success(f"Импортировано материалов темы: {len(items)} в курс «{c_name}»")
+                            st.rerun()
+                        else:
+                            st.warning("Укажи ссылку вида https://dispace.nstu.ru/course/ID или /course/ID/THEME_ID")
+                    except Exception as exc:
+                        st.error(f"Ошибка импорта: {exc}")
+
+                inspect_cid = st.session_state.get("inspect_course_id")
+                if inspect_cid:
+                    try:
+                        c_detail = dispace_api.get_course(int(inspect_cid))
+                        c_scores = dispace_api.get_course_scores(int(inspect_cid))
+                        st.markdown(f"##### Структура: {c_detail.get('title')} (#{inspect_cid})")
+                        if c_scores and c_scores.get("total_score") is not None:
+                            st.caption(f"Баллы по курсу: **{c_scores.get('total_score')}**")
+                        for mod in c_detail.get("modules") or []:
+                            if mod.get("hidden"):
+                                continue
+                            with st.expander(f"📦 {mod.get('title')}", expanded=False):
+                                for th in mod.get("themes") or []:
+                                    if th.get("hidden"):
+                                        continue
+                                    tid = th.get("id")
+                                    st.markdown(
+                                        f"- `{tid}` {th.get('title')} "
+                                        f"([открыть](https://dispace.nstu.ru/course/{inspect_cid}/{tid}))"
+                                    )
+                    except Exception as exc:
+                        st.error(f"Не удалось загрузить структуру курса: {exc}")
+
+        # ------------------------------------------ 2.2 Дисциплины и журнал
+        elif dispace_section == "🏛️ Дисциплины и журнал":
+            st.markdown(f"#### 🏛️ Учебный процесс: дисциплины, контрольные и журнал ([/education]({EDUCATION_URL}))")
+            try:
+                disciplines = dispace_api.list_disciplines()
+            except Exception as exc:
+                st.error(f"Ошибка загрузки дисциплин: {exc}")
+                disciplines = []
+
+            for d in disciplines:
+                did = d["id"]
+                d_title = d["title"]
+                lectors = ", ".join(d.get("lectors") or []) or "преподаватель не указан"
+                with st.container(border=True):
+                    head_c1, head_c2 = st.columns([3, 1])
+                    with head_c1:
+                        st.markdown(f"##### 📚 {d_title} (`#{did}`)")
+                        st.caption(f"Преподаватели: {lectors} · [Страница дисциплины]({d['url']})")
+                        if d.get("course_id"):
+                            st.markdown(
+                                f"Прикреплённый электронный курс: **#{d['course_id']} «{d['course_title']}»**"
+                            )
+                    with head_c2:
+                        if d.get("course_id"):
+                            if st.button(
+                                "📥 Скачать курс дисциплины",
+                                key=f"imp_disc_course_{did}",
+                                type="primary",
+                                width="stretch",
+                            ):
+                                with st.spinner(f"Скачиваю курс «{d['course_title']}»…"):
+                                    saved = dispace_api.import_course_to_store(
+                                        store,
+                                        course_id=int(d["course_id"]),
+                                        course_name=d_title,
+                                        include_files=True,
+                                    )
+                                    get_tutor.clear()
+                                st.success(f"Сохранено источников: {len(saved)} в курс «{d_title}»")
+                                st.rerun()
+
+                    # Контрольные мероприятия и курсовые работы
+                    c_events = d.get("control_events") or []
+                    if c_events:
+                        st.markdown("**Контрольные работы и задания:**")
+                        for ce in c_events:
+                            ce_files = ce.get("files") or []
+                            f_names = ", ".join(f.get("title", "файл") for f in ce_files)
+                            ce_col1, ce_col2 = st.columns([3, 1])
+                            with ce_col1:
+                                st.markdown(
+                                    f"- **{ce['name']}**"
+                                    + (f" (макс. балл: {ce['ects_limit']})" if ce.get("ects_limit") else "")
+                                    + (f" · стадия/балл: `{ce['score']}`" if ce.get("score") is not None else "")
+                                )
+                                if ce.get("description"):
+                                    st.caption(ce["description"][:300])
+                                if f_names:
+                                    st.caption(f"📎 Прикреплённые файлы: {f_names}")
+                            with ce_col2:
+                                if ce_files or ce.get("description"):
+                                    if st.button(
+                                        "📥 В Материалы",
+                                        key=f"imp_ce_{did}_{ce['id']}",
+                                        width="stretch",
+                                    ):
+                                        with st.spinner("Скачиваю файлы задания…"):
+                                            saved_ce = dispace_api.import_control_event_to_store(
+                                                store, d_title, ce
+                                            )
+                                            get_tutor.clear()
+                                        st.success(f"Добавлено источников: {len(saved_ce)}")
+                                        st.rerun()
+
+                    # Журнал успеваемости
+                    journal_cols = dispace_api.get_discipline_journal(int(did))
+                    if journal_cols:
+                        with st.expander(f"📊 Журнал оценок ({len(journal_cols)} контрольных точек)"):
+                            j_rows = [
+                                {
+                                    "Контрольное мероприятие": jc["title"],
+                                    "Макс. балл": jc["ects_limit"] if jc["ects_limit"] is not None else "—",
+                                    "Балл (ECTS)": jc["ects_mark"] if jc["ects_mark"] is not None else "—",
+                                    "Оценка": jc["text_mark"] or "—",
+                                }
+                                for jc in journal_cols
+                            ]
+                            st.dataframe(j_rows, width="stretch", hide_index=True)
+
+        # ------------------------------------------ 2.3 События и вебинары
+        elif dispace_section == "📅 События и вебинары":
+            st.markdown(f"#### 📅 События, онлайн-лекции и вебинары ([/events]({EVENTS_URL}))")
+            ev_col1, ev_col2 = st.columns([1, 1])
+            with ev_col1:
+                sel_month = st.selectbox(
+                    "Месяц",
+                    list(range(1, 13)),
+                    index=9,
+                    format_func=lambda m: [
+                        "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+                        "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+                    ][m - 1],
+                )
+            with ev_col2:
+                sel_year = st.selectbox("Год", [2025, 2026, 2027], index=1)
+
+            events = dispace_api.list_events(month=sel_month, year=sel_year)
+            records = dispace_api.list_webinar_records(limit=20)
+
+            if events:
+                st.markdown(f"**Расписание на {sel_month:02d}.{sel_year} ({len(events)}):**")
+                st.dataframe(events, width="stretch", hide_index=True)
+            else:
+                st.info(f"На {sel_month:02d}.{sel_year} запланированных вебинаров в календаре нет.")
+
+            st.markdown("**Записи прошедших вебинаров:**")
+            if records:
+                for rec in records:
+                    with st.container(border=True):
+                        st.markdown(f"**{rec['title']}** ({rec['date']})")
+                        if rec.get("discipline"):
+                            st.caption(rec["discipline"])
+                        if rec.get("url"):
+                            st.markdown(f"[Открыть запись]({rec['url']})")
+            else:
+                st.caption("Записей вебинаров пока нет.")
+
+        # ---------------------------------------------- 2.4 Каталог курсов
+        elif dispace_section == "🗂️ Каталог курсов":
+            st.markdown(f"#### 🗂️ Каталог электронных курсов НГТУ ([/courses]({CATALOG_URL}))")
+            cat_query = st.text_input(
+                "Поиск по названию, автору или ID курса",
+                placeholder="Например: математика, алгебра, физика, программирование…",
+            )
+            cat_data = dispace_api.list_catalog_courses(search=cat_query, limit=20)
+            cat_courses = cat_data.get("courses") or []
+            st.caption(
+                f"Всего курсов в каталоге НГТУ: **{cat_data.get('count', 0)}** · показано: **{len(cat_courses)}**"
+            )
+
+            for cc in cat_courses:
+                cid = cc["id"]
+                authors_str = ", ".join(cc.get("authors") or []) or "Авторы не указаны"
+                with st.container(border=True):
+                    c1, c2 = st.columns([4, 1])
+                    with c1:
+                        st.markdown(f"**#{cid} — {cc['title']}**")
+                        st.caption(f"Авторы: {authors_str} · [Открыть в DiSpace]({cc['url']})")
+                        if cc.get("description"):
+                            st.caption(cc["description"])
+                    with c2:
+                        if st.button("📥 Импорт", key=f"cat_imp_{cid}", width="stretch"):
+                            try:
+                                with st.spinner(f"Скачиваю курс #{cid}…"):
+                                    saved = dispace_api.import_course_to_store(
+                                        store, course_id=cid, course_name=cc["title"]
+                                    )
+                                    get_tutor.clear()
+                                if saved:
+                                    st.success(f"Сохранено: {len(saved)} ист.")
+                                    st.rerun()
+                                else:
+                                    st.warning("Курс закрыт или не содержит открытых текстовых тем.")
+                            except Exception as exc:
+                                st.warning(f"Доступ ограничен или курс пуст: {exc}")
+
+        # ----------------------------------------- 2.5 Тесты и контрольные
+        elif dispace_section == "🧪 Тесты и контрольные":
+            st.markdown(f"#### 🧪 Тесты и контрольные темы ([/tests]({TESTS_URL}))")
+            st.caption(
+                "DIBot никогда не проходит и не отправляет тесты за студента. "
+                "Вместо этого ты можешь одной кнопкой сгенерировать тренировочный вариант по теме любого теста "
+                "во вкладке «Тренажёр» с проверкой эталонных решений через SymPy."
+            )
+            with st.spinner("Сканирую назначенные тесты и модули курсов…"):
+                tests_info = dispace_api.list_tests()
+
+            assigned = tests_info.get("assigned_tests") or []
+            course_tests = tests_info.get("course_tests") or []
+
+            st.markdown(f"**Назначенные сессии тестирования (`/tests`): {len(assigned)}**")
+            if assigned:
+                st.dataframe(assigned, width="stretch", hide_index=True)
+            else:
+                st.caption("Активных назначенных сессий в разделе `/tests` сейчас нет.")
+
+            st.markdown(f"**Тесты и контрольные работы внутри твоих курсов ({len(course_tests)}):**")
+            for idx, ct in enumerate(course_tests):
+                with st.container(border=True):
+                    tc1, tc2, tc3 = st.columns([3, 1, 1])
+                    with tc1:
+                        st.markdown(
+                            f"**{ct['theme_title']}** ({ct['type']})\n\n"
+                            f"Курс: *{ct['course_title']}* · Модуль: *{ct['module_title']}*"
+                        )
+                        st.caption(f"Ссылка: {ct['url']}")
+                    with tc2:
+                        if st.button(
+                            "🏋️ В Тренажёр",
+                            key=f"test_to_practice_{idx}",
+                            type="primary",
+                            width="stretch",
+                        ):
+                            st.session_state["practice_prefill_topic"] = (
+                                f"{ct['module_title']}: {ct['theme_title']}"
+                            )
+                            st.session_state["practice_prefill_course"] = ct["course_title"]
+                            st.toast(
+                                f"Тема «{ct['theme_title']}» передана на вкладку «🧪 Тренажёр»!",
+                                icon="🧪",
+                            )
+                    with tc3:
+                        if ct.get("theme_id"):
+                            if st.button(
+                                "📥 В Материалы",
+                                key=f"test_imp_{idx}",
+                                width="stretch",
+                            ):
+                                try:
+                                    items = dispace_api.extract_theme_materials(
+                                        int(ct["course_id"]),
+                                        int(ct["theme_id"]),
+                                        module_title=ct["module_title"],
+                                        theme_title=ct["theme_title"],
+                                    )
+                                    for it in items:
+                                        store.add_source(
+                                            course=ct["course_title"],
+                                            title=it.title,
+                                            text=it.text,
+                                            url=it.url,
+                                        )
+                                    store.reload()
+                                    get_tutor.clear()
+                                    if items:
+                                        st.success(f"Сохранено: {len(items)}")
+                                        st.rerun()
+                                    else:
+                                        st.info("Эта тема содержит только закрытый банк тестовых вопросов.")
+                                except Exception as exc:
+                                    st.warning(f"Не удалось прочитать тему: {exc}")
+
+        # --------------------------------------------------- 2.6 Сообщения
+        elif dispace_section == "✉️ Сообщения":
+            st.markdown(f"#### ✉️ Сообщения и диалоги с преподавателями ([/messages]({MESSAGES_URL}))")
+            dialogues = dispace_api.list_messages(limit=25)
+            if not dialogues:
+                st.info("Диалогов не найдено.")
+            else:
+                msg_col1, msg_col2 = st.columns([2, 3])
+                with msg_col1:
+                    st.markdown("**Диалоги:**")
+                    selected_conv = st.radio(
+                        "Выбери собеседника",
+                        dialogues,
+                        format_func=lambda d: f"{d['conversant_name']}"
+                        + (f" (🔴 {d['count_unread']})" if d.get("count_unread") else ""),
+                        label_visibility="collapsed",
+                    )
+                with msg_col2:
+                    if selected_conv and selected_conv.get("conversant_id"):
+                        conv_id = int(selected_conv["conversant_id"])
+                        conv_name = selected_conv["conversant_name"]
+                        st.markdown(f"##### Переписка: {conv_name}")
+                        thread = dispace_api.get_dialogue(conv_id, limit=30)
+
+                        if st.button(
+                            "📥 Сохранить сообщения диалога в Материалы",
+                            key=f"save_dlg_{conv_id}",
+                            width="stretch",
+                        ):
+                            combined_thread = "\n\n---\n\n".join(
+                                f"**{m['sender_name']}** ({m['date'][:16]}):\n{m['text']}"
+                                for m in thread
+                                if m.get("text")
+                            )
+                            if combined_thread.strip():
+                                store.add_source(
+                                    course="Сообщения преподавателей",
+                                    title=f"Диалог: {conv_name}",
+                                    text=combined_thread,
+                                    url=MESSAGES_URL,
+                                )
+                                store.reload()
+                                get_tutor.clear()
+                                st.success(f"Переписка с «{conv_name}» сохранена в Материалы!")
+                                st.rerun()
+
+                        for m in thread:
+                            with st.container(border=True):
+                                st.caption(f"**{m['sender_name']}** · {m['date'][:19].replace('T', ' ')}")
+                                if m.get("theme"):
+                                    st.markdown(f"*{m['theme']}*")
+                                st.markdown(m.get("text") or "*(без текста)*")
+                                for f_info in m.get("files") or []:
+                                    f_title = f_info.get("title") or "Файл"
+                                    f_url = f_info.get("url") or ""
+                                    if f_url:
+                                        st.caption(f"📎 [{f_title}]({f_url})")
+
+
+# ============================================================= 3. МАТЕРИАЛЫ
+
+with tabs[2]:
+    store = sync_materials()
     stats = store.stats()
 
-    left, right = st.columns([2, 3])
-    with left:
-        st.metric("Источников", stats["sources"])
-        st.metric("Фрагментов", stats["chunks"])
-        st.metric("Символов", f"{stats['chars']:,}".replace(",", " "))
-    with right:
-        st.markdown("**Добавить материал**")
+    head_m1, head_m2 = st.columns([4, 1])
+    with head_m1:
+        st.subheader("📚 Локальная база учебных материалов")
+    with head_m2:
+        if st.button("🔄 Обновить список", width="stretch"):
+            store.reload()
+            get_tutor.clear()
+            st.rerun()
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Курсов", len(stats["courses"]))
+    m2.metric("Источников", stats["sources"])
+    m3.metric("Фрагментов (чанков)", stats["chunks"])
+    m4.metric("Символов текста", f"{stats['chars']:,}".replace(",", " "))
+
+    with st.expander("➕ Добавить свой файл (.pdf, .docx, .md, .txt) или вставить текст вручную", expanded=False):
         with st.form("add_material"):
-            course = st.text_input("Курс", placeholder="Линейная алгебра")
-            title = st.text_input("Название", placeholder="Лекция 1. Матрицы")
-            url = st.text_input("Ссылка (необязательно)", placeholder="https://dispace.nstu.ru/...")
-            uploaded = st.file_uploader(
-                "Файл .txt / .md / .pdf / .docx",
-                type=["txt", "md", "markdown", "pdf", "docx"],
-            )
-            pasted = st.text_area("…или вставь текст", height=120)
-            add = st.form_submit_button("Сохранить", type="primary")
+            f_col1, f_col2 = st.columns(2)
+            with f_col1:
+                course = st.text_input("Курс / дисциплина", placeholder="Линейная алгебра")
+                title = st.text_input("Название материала", placeholder="Лекция 1. Матрицы и определители")
+            with f_col2:
+                url = st.text_input("Ссылка (необязательно)", placeholder="https://dispace.nstu.ru/...")
+                uploaded = st.file_uploader(
+                    "Файл .txt / .md / .pdf / .docx",
+                    type=["txt", "md", "markdown", "pdf", "docx"],
+                )
+            pasted = st.text_area("…или вставь текст лекции / методички", height=120)
+            add = st.form_submit_button("Сохранить в базу", type="primary", width="stretch")
 
         if add:
-            if not course or not (uploaded or pasted.strip()):
-                st.warning("Нужны название курса и текст (файл или вставка).")
+            if not course.strip() or not (uploaded or pasted.strip()):
+                st.warning("Укажи название курса и прикрепи файл (или вставь текст).")
             else:
                 text = pasted
                 if uploaded:
@@ -210,135 +892,72 @@ with tabs[1]:
                 if text.strip():
                     source = store.add_source(
                         course=course.strip(),
-                        title=(title or uploaded.name if uploaded else title or "Без названия").strip(),
+                        title=(title.strip() or (uploaded.name if uploaded else "Материал")),
                         text=text,
                         url=url.strip(),
                     )
-                    st.success(
-                        f"Сохранено: {source.title} — {len(source.chunk_ids)} фрагментов"
-                    )
+                    store.reload()
                     get_tutor.clear()
+                    st.success(
+                        f"Сохранено: «{source.title}» — {len(source.chunk_ids)} фрагментов ({source.chars} симв.)"
+                    )
                     st.rerun()
 
     st.divider()
-    st.markdown("**Что уже загружено**")
+    st.markdown("#### Загруженные курсы и методички")
     if not store.sources:
-        st.info("Пока пусто. Добавь лекцию выше или импортируй курс из диспейса.")
-    for course_name in store.list_courses():
-        with st.expander(f"{course_name} — {len(store.list_sources(course_name))} источников"):
-            for source in store.list_sources(course_name):
-                cols = st.columns([5, 1])
-                with cols[0]:
-                    st.markdown(f"**{source.title}** — {source.chars} симв., {len(source.chunk_ids)} фр.")
-                    if source.url:
-                        st.caption(source.url)
-                with cols[1]:
-                    if st.button("Удалить", key=f"del_{source.id}"):
-                        store.remove_source(source.id)
-                        get_tutor.clear()
-                        st.rerun()
+        st.info("База материалов пуста. Скачай курс на вкладке «🎓 DiSpace НГТУ» или загрузи файл выше.")
+    else:
+        for course_name in store.list_courses():
+            course_sources = store.list_sources(course_name)
+            total_course_chars = sum(s.chars for s in course_sources)
+            total_course_chunks = sum(len(s.chunk_ids) for s in course_sources)
+            with st.expander(
+                f"📁 {course_name} — {len(course_sources)} ист. · {total_course_chunks} фр. · {total_course_chars:,} симв.".replace(
+                    ",", " "
+                ),
+                expanded=True,
+            ):
+                for source in course_sources:
+                    with st.container(border=True):
+                        cols = st.columns([5, 1, 1])
+                        with cols[0]:
+                            st.markdown(
+                                f"**{source.title}** — `{source.chars:,}` симв., `{len(source.chunk_ids)}` фр.".replace(
+                                    ",", " "
+                                )
+                            )
+                            if source.url:
+                                st.caption(f"Источник: {source.url}")
+                        with cols[1]:
+                            preview_key = f"prev_toggle_{source.id}"
+                            if st.button("👁️ Текст", key=f"btn_prev_{source.id}", width="stretch"):
+                                st.session_state[preview_key] = not st.session_state.get(preview_key, False)
+                        with cols[2]:
+                            if st.button("🗑️ Удалить", key=f"del_{source.id}", width="stretch"):
+                                store.remove_source(source.id)
+                                store.reload()
+                                get_tutor.clear()
+                                st.rerun()
 
-    st.divider()
-    st.markdown("**Импорт из диспейса**")
-    st.caption(
-        "Читалка работает через локальную сессию браузера: ты входишь сам, пароль не сохраняется. "
-        "Импортируются лекции (с формулами LaTeX) и прикреплённые методички (.pdf, .docx)."
-    )
-    dispace_api = get_api_client(auto_refresh=False)
-    dispace_courses = dispace_api.list_courses() if dispace_api else []
+                        if st.session_state.get(f"prev_toggle_{source.id}", False):
+                            full_text = store.get_source_text(source.id)
+                            st.text_area(
+                                "Содержимое источника",
+                                value=full_text[:6000] + ("\n\n… [показаны первые 6000 символов]" if len(full_text) > 6000 else ""),
+                                height=220,
+                                disabled=True,
+                                key=f"ta_prev_{source.id}",
+                            )
 
-    col_a, col_b = st.columns([2, 3])
-    with col_a:
-        if dispace_api:
-            st.success(f"Сессия DiSpace активна · доступно курсов: {len(dispace_courses)}")
-        else:
-            st.warning("Сессия DiSpace не активна или требует обновления")
-        if st.button("1. Войти / обновить сессию DiSpace", width="stretch"):
-            subprocess.Popen(
-                [sys.executable, str(PROJECT_ROOT / "src" / "lms_reader.py"), "--login"],
-                cwd=str(PROJECT_ROOT),
-            )
-            st.info("Открылось окно браузера. Войди в нём, затем обнови страницу.")
 
-        if dispace_courses:
-            with st.form("import_full_course"):
-                selected_dc = st.selectbox(
-                    "Импортировать весь курс целиком",
-                    dispace_courses,
-                    format_func=lambda c: f"#{c['id']} {c['title']}"
-                    + (f" ({c['discipline']})" if c.get("discipline") else ""),
-                )
-                custom_course_name = st.text_input(
-                    "Название в базе (необязательно)",
-                    placeholder=selected_dc["discipline"] or selected_dc["title"],
-                )
-                run_full_import = st.form_submit_button(
-                    "Скачать все темы и методички курса", type="primary", width="stretch"
-                )
-            if run_full_import and selected_dc:
-                target_name = (
-                    custom_course_name.strip()
-                    or selected_dc.get("discipline")
-                    or selected_dc["title"]
-                )
-                with st.spinner(f"Импортирую курс «{selected_dc['title']}»…"):
-                    proc = subprocess.run(
-                        [
-                            sys.executable,
-                            str(PROJECT_ROOT / "src" / "lms_reader.py"),
-                            "--import-course",
-                            str(selected_dc["id"]),
-                            "--course",
-                            target_name,
-                        ],
-                        cwd=str(PROJECT_ROOT),
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        timeout=300,
-                    )
-                st.code((proc.stdout or "") + (proc.stderr or ""))
-                get_tutor.clear()
-                st.rerun()
+# ============================================================= 4. КОНСПЕКТЫ
 
-    with col_b:
-        with st.form("import_page"):
-            page_url = st.text_input(
-                "Ссылка на страницу, тему или ID курса",
-                placeholder="https://dispace.nstu.ru/course/3121/32823",
-            )
-            page_course = st.text_input("Курс для сохранения", placeholder="Математический анализ")
-            run_import = st.form_submit_button("2. Импортировать по ссылке", width="stretch")
-        if run_import and page_url:
-            cmd = [
-                sys.executable,
-                str(PROJECT_ROOT / "src" / "lms_reader.py"),
-                "--import",
-                page_url.strip(),
-            ]
-            if page_course.strip():
-                cmd.extend(["--course", page_course.strip()])
-            with st.spinner("Читаю материалы…"):
-                proc = subprocess.run(
-                    cmd,
-                    cwd=str(PROJECT_ROOT),
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=240,
-                )
-            st.code((proc.stdout or "") + (proc.stderr or ""))
-            get_tutor.clear()
-
-# --------------------------------------------------------------- конспекты
-
-with tabs[2]:
-    st.subheader("Конспекты")
-    store = get_store()
+with tabs[3]:
+    st.subheader("📝 Структурированные конспекты со ссылками на источники")
+    store = sync_materials()
     if not store.sources:
-        st.info("Сначала добавь материалы на вкладке «Материалы».")
+        st.info("Сначала добавь материалы на вкладке «🎓 DiSpace НГТУ» или «📚 Материалы».")
     else:
         course_names = store.list_courses()
         selected_course = st.selectbox("Курс", course_names, key="notes_course")
@@ -349,25 +968,21 @@ with tabs[2]:
 
         col1, col2 = st.columns([1, 3])
         with col1:
-            rebuild = st.button("Собрать конспект", type="primary")
+            rebuild = st.button("✨ Собрать конспект", type="primary", width="stretch")
         with col2:
             st.caption(
                 f"{selected.chars} символов, {len(selected.chunk_ids)} фрагментов. "
-                "Каждый тезис получит ссылку на фрагмент источника."
+                "Каждый тезис получит ссылку `[#N]` на конкретный фрагмент лекции."
             )
 
-        notes_dir = store.notes_dir
-        from materials import slugify
-
-        note_path = notes_dir / slugify(selected_course) / f"{slugify(selected.title)}.md"
+        note_path = store.notes_dir / slugify(selected_course) / f"{slugify(selected.title)}.md"
 
         if rebuild:
             builder = NoteBuilder(get_tutor().llm, store)
             progress = st.progress(0.0, text="Готовлю фрагменты…")
-            total_holder = {"total": len(selected.chunk_ids)}
 
             def on_progress(position: int, total: int, chunk) -> None:
-                progress.progress(position / max(total, 1), text=f"Фрагмент {position} из {total}")
+                progress.progress(position / max(total, 1), text=f"Обрабатываю фрагмент {position} из {total}…")
 
             try:
                 result = builder.build(selected, on_progress=on_progress)
@@ -379,65 +994,92 @@ with tabs[2]:
                 st.rerun()
 
         if note_path.exists():
+            note_md = note_path.read_text(encoding="utf-8")
             st.download_button(
-                "Скачать .md",
-                data=note_path.read_text(encoding="utf-8"),
+                "📥 Скачать конспект (.md)",
+                data=note_md,
                 file_name=note_path.name,
                 mime="text/markdown",
             )
-            st.markdown(note_path.read_text(encoding="utf-8"))
+            with st.container(border=True):
+                st.markdown(note_md)
         else:
-            st.info("Конспект ещё не собран.")
+            st.info("Конспект для этого материала ещё не собран. Нажми «Собрать конспект».")
 
-# --------------------------------------------------------------- тренажёр
 
-with tabs[3]:
-    st.subheader("Тренажёр: тренировочные задания")
-    store = get_store()
+# ============================================================== 5. ТРЕНАЖЁР
+
+with tabs[4]:
+    st.subheader("🧪 Тренажёр: генерация вариантов с самопроверкой")
+    store = sync_materials()
+
+    prefill_topic = st.session_state.get("practice_prefill_topic", "")
+    prefill_course = st.session_state.get("practice_prefill_course", "Все курсы")
+
+    practice_courses = ["Все курсы"] + store.list_courses()
+    default_course_idx = (
+        practice_courses.index(prefill_course)
+        if prefill_course in practice_courses
+        else 0
+    )
 
     with st.form("practice_form"):
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
         with col1:
-            topic = st.text_input("Тема", placeholder="Определители и метод Крамера")
+            topic = st.text_input(
+                "Тема тренировки",
+                value=prefill_topic,
+                placeholder="Например: Определители, метод Крамера, предел последовательности",
+            )
         with col2:
-            count = st.slider("Заданий", 1, 8, 3)
+            p_course = st.selectbox("Опираться на курс", practice_courses, index=default_course_idx)
         with col3:
+            count = st.slider("Заданий", 1, 8, 3)
+        with col4:
             difficulty = st.selectbox("Уровень", ["лёгкий", "средний", "сложный"], index=1)
+
         verify_all = st.toggle(
-            "Проверить эталонные решения", value=True,
-            help="sympy пересчитает ответ, вторая модель проверит ход решения",
+            "Проверить эталонные решения (SymPy пересчитает ответ, вторая модель проверит ход)",
+            value=True,
         )
-        generate = st.form_submit_button("Сгенерировать вариант", type="primary")
+        generate = st.form_submit_button("Сгенерировать вариант", type="primary", width="stretch")
 
     if generate and topic.strip():
-        with st.spinner("Составляю задания и проверяю эталоны…"):
+        with st.spinner("Составляю задания по материалам курса и проверяю эталоны…"):
             try:
                 tasks, reports = get_tutor().practice(
-                    topic=topic.strip(), count=count, difficulty=difficulty, verify=verify_all
+                    topic=topic.strip(),
+                    count=count,
+                    difficulty=difficulty,
+                    course=None if p_course == "Все курсы" else p_course,
+                    verify=verify_all,
                 )
             except LLMError as exc:
                 st.error(f"Модель недоступна: {exc}")
                 tasks, reports = [], []
-        st.session_state.practice = (topic, tasks, reports, difficulty)
+        st.session_state.practice = (topic.strip(), tasks, reports, difficulty)
 
     if st.session_state.get("practice"):
-        topic, tasks, reports, difficulty = st.session_state.practice
-        st.caption(f"Тема: **{topic}** · уровень: {difficulty} · заданий: {len(tasks)}")
+        p_topic, tasks, reports, p_diff = st.session_state.practice
+        st.caption(f"Тема: **{p_topic}** · уровень: {p_diff} · заданий: {len(tasks)}")
         if not tasks:
-            st.warning("Задания не распознаны в ответе модели. Попробуй ещё раз.")
-        for i, task in enumerate(tasks, start=1):
+            st.warning("Задания не распознаны в ответе модели. Попробуй сформулировать тему конкретнее.")
+        for i, task_item in enumerate(tasks, start=1):
             report = reports[i - 1] if i - 1 < len(reports) else None
             badge = ""
             if report:
-                badge = {"confirmed": " ✅ эталон проверен", "disputed": " ⛔ эталон спорный",
-                         "unverified": " ⚠️ эталон не проверен"}[report.verdict]
+                badge = {
+                    "confirmed": " · ✅ эталон проверен",
+                    "disputed": " · ⛔ эталон спорный",
+                    "unverified": " · ⚠️ эталон не проверен",
+                }.get(report.verdict, "")
             with st.container(border=True):
-                st.markdown(f"**Задание {i}.** {task['statement']}")
-                st.caption(f"Уровень: {task.get('difficulty') or difficulty}{badge}")
-                with st.expander("Показать ответ"):
-                    st.markdown(f"**Ответ:** {task.get('answer') or '—'}")
-                    if task.get("solution"):
-                        st.markdown(task["solution"])
+                st.markdown(f"**Задание {i}.** {task_item['statement']}")
+                st.caption(f"Уровень: {task_item.get('difficulty') or p_diff}{badge}")
+                with st.expander("Показать эталонное решение и ответ"):
+                    st.markdown(f"**Ответ:** {task_item.get('answer') or '—'}")
+                    if task_item.get("solution"):
+                        st.markdown(task_item["solution"])
                     if report:
                         for check in report.checks:
                             mark = {"pass": "✅", "fail": "❌", "skipped": "➖", "error": "⚠️"}.get(
@@ -447,54 +1089,61 @@ with tabs[3]:
 
         if tasks:
             as_md = "\n\n".join(
-                f"**{i}.** {t['statement']}\n\nОтвет: {t.get('answer', '')}" for i, t in enumerate(tasks, 1)
+                f"**{i}.** {t['statement']}\n\nОтвет: {t.get('answer', '')}"
+                for i, t in enumerate(tasks, 1)
             )
-            st.download_button("Скачать вариант без решений", as_md, file_name="вариант.md")
+            st.download_button(
+                "📥 Скачать вариант (.md)",
+                as_md,
+                file_name="вариант_тренировки.md",
+                mime="text/markdown",
+            )
 
-# ------------------------------------------------------------------ модели
 
-with tabs[4]:
-    st.subheader("Модели и маршрутизация")
+# =============================================================== 6. МОДЕЛИ
+
+with tabs[5]:
+    st.subheader("⚙️ Модели и маршрутизация")
     llm = get_tutor().llm
 
     col1, col2 = st.columns([3, 2])
     with col1:
-        st.markdown("**Маршруты задач**")
+        st.markdown("**Маршруты задач (`config/settings.json`)**")
         rows = []
-        for task in llm.router.routing:
-            route = llm.router.route(task)
+        for task_name in llm.router.routing:
+            route = llm.router.route(task_name)
             rows.append(
                 {
-                    "задача": task,
-                    "модель": route.model,
-                    "размышления": "да" if route.think else "нет",
-                    "температура": route.temperature,
-                    "контекст": route.num_ctx,
-                    "запасные": ", ".join(route.fallback) or "—",
+                    "Задача": task_name,
+                    "Основная модель": route.model,
+                    "Размышления (think)": "да" if route.think else "нет",
+                    "Температура": route.temperature,
+                    "Контекст (num_ctx)": route.num_ctx,
+                    "Запасные модели": ", ".join(route.fallback) or "—",
                 }
             )
         st.dataframe(rows, width="stretch", hide_index=True)
 
-        st.markdown("**Независимость проверки**")
-        for model in llm.router.models:
-            verifier = llm.router.verifier(model)
-            ok = verifier and verifier != model
-            st.caption(f"{'✅' if ok else '⚠️'} решает `{model}` → проверяет `{verifier or '—'}`")
+        st.markdown("**Независимость перекрёстной проверки**")
+        for model_name in llm.router.models:
+            verifier = llm.router.verifier(model_name)
+            ok = verifier and verifier != model_name
+            st.caption(f"{'✅' if ok else '⚠️'} решает `{model_name}` → проверяет `{verifier or '—'}`")
 
     with col2:
-        st.markdown("**Железо**")
-        st.caption("RTX 4060 8 ГБ · 16 ГБ RAM. В VRAM помещается одна 8B-модель.")
+        st.markdown("**Аппаратный профиль**")
+        st.caption("RTX 4060 8 ГБ VRAM · 16 ГБ RAM. В VRAM одновременно держится одна 8B/9B-модель.")
         st.caption(
-            "Контекст ограничен 8192: при 16384 модель не влезает в 8 ГБ "
-            "и 20% слоёв уходят на CPU — скорость падает в 8 раз (5.5 против 26.8 ток/с)."
+            "Контекст зафиксирован на `8192`: при `16384` KV-кэш не помещается в 8 ГБ VRAM, "
+            "часть слоёв выгружается в RAM и скорость падает с ~27 ток/с до ~5.5 ток/с."
         )
         if status["loaded"]:
-            st.markdown("**Сейчас в памяти**")
+            st.markdown("**Сейчас загружено в VRAM:**")
             for item in status["loaded"]:
-                st.caption(f"{item['name']} · {item['size_gb']} ГБ · {item['processor']}")
+                st.caption(f"• `{item['name']}` · {item['size_gb']} ГБ · {item['processor']}")
 
     st.divider()
-    if st.button("Полная диагностика"):
-        with st.spinner("Проверяю…"):
+    if st.button("🩺 Запустить полную диагностику Ollama"):
+        with st.spinner("Проверяю доступность всех моделей…"):
             report = llm.health()
         st.code(report.as_text())

@@ -174,7 +174,7 @@ class LLMClient:
         text_hint: str | None = None,
         think: bool | None = None,
         options: Mapping[str, Any] | None = None,
-        images: Sequence[str | Path] | None = None,
+        images: Sequence[str | Path | bytes] | None = None,
         json_format: bool | str | None = None,
         timeout: float | None = None,
         max_attempts: int = 2,
@@ -436,15 +436,21 @@ def _normalise_messages(messages: Messages) -> list[dict[str, Any]]:
     return normalised
 
 
-def _encode_image(source: str | Path) -> str:
+def _encode_image(source: str | Path | bytes | bytearray) -> str:
     """Ollama принимает base64 без data-префикса."""
+    if isinstance(source, (bytes, bytearray)):
+        return base64.b64encode(bytes(source)).decode("ascii")
     if isinstance(source, Path):
         return base64.b64encode(source.read_bytes()).decode("ascii")
     if source.startswith("data:"):
         return source.split(",", 1)[1]
-    path = Path(source)
-    if path.exists():
-        return base64.b64encode(path.read_bytes()).decode("ascii")
+    if len(source) < 260 and ("\n" not in source):
+        try:
+            path = Path(source)
+            if path.exists():
+                return base64.b64encode(path.read_bytes()).decode("ascii")
+        except OSError:
+            pass
     return source
 
 
