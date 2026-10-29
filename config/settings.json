@@ -1,0 +1,103 @@
+{
+  "ollama": {
+    "base_url": "http://localhost:11434",
+    "models_dir": "D:\\OllamaModels",
+    "request_timeout": 600,
+    "keep_alive": "5m",
+    "model_cache_ttl": 30
+  },
+
+  "models": {
+    "qwen3.5:9b": {
+      "role": "general",
+      "num_ctx": 8192,
+      "max_ctx": 262144,
+      "note": "Быстрый универсал. Конспекты, объяснения, роль критика."
+    },
+    "deepseek-r1:8b": {
+      "role": "reasoning",
+      "num_ctx": 8192,
+      "max_ctx": 131072,
+      "note": "Пошаговые рассуждения. Математика, логика, разбор условий."
+    },
+    "qwen2.5-coder:7b": {
+      "role": "code",
+      "num_ctx": 8192,
+      "max_ctx": 32768,
+      "note": "Код, LaTeX, генерация проверок для sympy."
+    },
+    "qwen3-vl:8b": {
+      "role": "vision",
+      "num_ctx": 8192,
+      "max_ctx": 262144,
+      "note": "Сканы страниц, фото задач, схемы, скриншоты."
+    }
+  },
+
+  "routing": {
+    "chat": {
+      "model": "qwen3.5:9b",
+      "fallback": ["qwen2.5-coder:7b", "deepseek-r1:8b"],
+      "temperature": 0.7,
+      "think": false
+    },
+    "notes": {
+      "model": "qwen3.5:9b",
+      "fallback": ["qwen3-vl:8b", "qwen2.5-coder:7b"],
+      "temperature": 0.35,
+      "think": true
+    },
+    "summary": {
+      "model": "qwen3.5:9b",
+      "fallback": ["qwen2.5-coder:7b"],
+      "temperature": 0.2,
+      "think": false
+    },
+    "math": {
+      "model": "deepseek-r1:8b",
+      "fallback": ["qwen3.5:9b", "qwen2.5-coder:7b"],
+      "temperature": 0.15,
+      "think": true
+    },
+    "code": {
+      "model": "qwen2.5-coder:7b",
+      "fallback": ["qwen3.5:9b"],
+      "temperature": 0.1,
+      "think": false
+    },
+    "latex": {
+      "model": "qwen2.5-coder:7b",
+      "fallback": ["qwen3.5:9b"],
+      "temperature": 0.1,
+      "think": false
+    },
+    "vision": {
+      "model": "qwen3-vl:8b",
+      "fallback": ["qwen3.5:9b"],
+      "temperature": 0.2,
+      "think": false
+    },
+    "verify": {
+      "model": "qwen3.5:9b",
+      "fallback": ["deepseek-r1:8b", "qwen2.5-coder:7b"],
+      "temperature": 0.0,
+      "think": true
+    }
+  },
+
+  "verification": {
+    "comment": "Кросс-модель: проверяющая модель обязана отличаться от решавшей.",
+    "always_verify": ["math", "latex", "code"],
+    "independent_from_solver": true
+  },
+
+  "search": {
+    "searxng_url": "http://localhost:8080",
+    "prefer": "searxng",
+    "language": "ru",
+    "timeout": 10
+  },
+
+  "browser_headless": true,
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}

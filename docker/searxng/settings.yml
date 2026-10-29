@@ -1,0 +1,35 @@
+use_default_settings: true
+
+general:
+  instance_name: "DIBot Search"
+  debug: false
+
+server:
+  # Секрет нужен для подписи сессий SearXNG, не используется как пароль.
+  secret_key: "dibot-local-searxng-secret-key-change-me"
+  limiter: false
+  public_instance: false
+  image_proxy: true
+  port: 8080
+  bind_address: "0.0.0.0"
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  # Ключевая строка: без json в списке форматов клиент получит 403.
+  formats:
+    - html
+    - json
+
+ui:
+  static_use_hash: true
+
+engines:
+  - name: duckduckgo
+    disabled: false
+  - name: google
+    disabled: false
+  - name: wikipedia
+    disabled: false
+  - name: yandex
+    disabled: false
