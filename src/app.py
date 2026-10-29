@@ -1216,10 +1216,19 @@ with tabs[0]:
 
         # Собираем историю предыдущих реплик для многошагового контекста
         history_messages: list[dict[str, str]] = []
-        for prev in source_turns[-8:]:
+        recent_turns = source_turns[-8:]
+        for idx, prev in enumerate(recent_turns):
             role = prev["role"]
             if role == "user":
                 content = prev.get("content") or ""
+                ocr_cond = prev.get("ocr_condition")
+                if not ocr_cond and idx + 1 < len(recent_turns):
+                    next_turn = recent_turns[idx + 1]
+                    next_ans = next_turn.get("answer")
+                    if next_ans and getattr(next_ans, "extracted_image_text", None):
+                        ocr_cond = next_ans.extracted_image_text
+                if ocr_cond:
+                    content = f"{content}\n[Распознанное условие задачи с прикреплённого фото]:\n{ocr_cond}".strip()
             else:
                 ans_obj: Answer | None = prev.get("answer")
                 content = ans_obj.text if ans_obj else (prev.get("content") or "")
@@ -1315,6 +1324,11 @@ with tabs[0]:
                         "answer": answer,
                     }
                     st.session_state.chat_turns.append(assistant_turn)
+                    # Если было распознано фото, сохраняем условие в соответствующий user-ход
+                    if answer.extracted_image_text and len(st.session_state.chat_turns) >= 2:
+                        prev_user = st.session_state.chat_turns[-2]
+                        if prev_user.get("role") == "user":
+                            prev_user["ocr_condition"] = answer.extracted_image_text
                     _save_active_chat_turns()
                     render_assistant_turn(assistant_turn, is_latest=True, turn_idx=len(st.session_state.chat_turns) - 1)
 

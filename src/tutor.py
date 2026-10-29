@@ -91,6 +91,56 @@ def _is_generic_image_query(query: str) -> bool:
     clean = re.sub(r"[^\w\s]", "", clean).strip()
     return len(clean) < 4
 
+
+_FOLLOWUP_TRIGGERS_RE = re.compile(
+    r"(?i)\b("
+    r"почему|откуда|как\s+так|а\s+если|что\s+значит|объясни|поясни|поясните|разъясни|подробнее|"
+    r"в\s+шаге|в\s+ответе|в\s+формуле|в\s+строке|в\s+знаке|знак|минус|плюс|"
+    r"вариант\w*|почему\s+именно|почему\s+не|а\s+почему|а\s+как|а\s+откуда|а\s+зачем|а\s+где|"
+    r"там|тут|здесь|в\s+решении|в\s+тво[её]м\s+ответе|в\s+тво[её]м\s+решении|выше|ранее|"
+    r"перв\w+\s+шаг|втор\w+\s+шаг|трет\w+\s+шаг|четверт\w+\s+шаг|не\s+понял|не\s+понятно|"
+    r"а\s+в\s+чем|в\s+чём|переход|тождеств"
+    r")\b"
+)
+
+_NEW_PROBLEM_RE = re.compile(
+    r"(?i)\b("
+    r"реши\s+задачу|найдите\s+производную|вычислите\s+предел|решите\s+уравнение|найдите\s+интеграл|"
+    r"дана\s+функция|дана\s+матрица|новое\s+задание|новая\s+задача|следующая\s+задача"
+    r")\b"
+)
+
+
+def _is_followup_question(query: str, history: Sequence[dict[str, str]] | None) -> bool:
+    """Определить, является ли реплика уточняющим вопросом по предыдущему решению в диалоге."""
+    if not history:
+        return False
+    has_assistant = any(m.get("role") == "assistant" for m in history)
+    if not has_assistant:
+        return False
+
+    q = (query or "").strip()
+    if not q:
+        return False
+    if _NEW_PROBLEM_RE.search(q):
+        return False
+
+    if _FOLLOWUP_TRIGGERS_RE.search(q):
+        return True
+
+    # Короткие уточняющие реплики без признаков новой задачи
+    if len(q) <= 75 and any(
+        w in q.lower()
+        for w in (
+            "почему", "откуда", "как", "знак", "минус", "плюс", "шаг", "строк",
+            "ответ", "вариант", "там", "тут", "это", "где", "зачем", "а почему"
+        )
+    ):
+        return True
+
+    return False
+
+
 PRACTICE_SYSTEM = """Ты составляешь тренировочные задания по учебной теме.
 
 Отвечай ТОЛЬКО JSON:
@@ -108,18 +158,34 @@ NOTEBOOK_SOLUTION_SYSTEM = """Ты — образцовый студент-от�
 
 Структура тетрадного оформления:
 1. **📋 Дано и требуется найти:**
-   Чёткая математическая запись исходного условия задачи, функции, последовательности или вариантов ответа.
+   Чёткая математическая запись исходного условия задачи, функции, точки/интервала или предложенных вариантов ответа.
 2. **📖 Теоретическая база (по материалам лекции):**
-   Укажи точное определение, теорему, табличную формулу или правило дифференцирования/пределов/матриц из приведённого конспекта лекции, которое применяется в этой задаче (в тех же обозначениях, что и в лекции).
+   Укажи точное определение, теорему, формулу из лекции НГТУ (в тех же обозначениях: $\\Delta t$, $\\Delta x$, $f'(x_0) = \\lim_{\\Delta x \\to 0} \\frac{f(x_0+\\Delta x)-f(x_0)}{\\Delta x}$), которая применяется в этой задаче.
 3. **✍️ Подробный тетрадный ход решения:**
-   Расписывай каждый шаг последовательно, без пропуска промежуточных выкладок:
-   - что подставляем,
-   - какое тождество или правило применяем на каждом переходе,
+   Расписывай каждый шаг последовательно, без пропуска выкладок:
+   - подстановка значений аргумента и точки $t_0$ / $x_0$;
+   - тождественные преобразования;
    - промежуточные упрощения.
-   Все строчные формулы оформляй в `$...$`, а ключевые выкладки, пределы, дроби и матрицы — на отдельных строках в `$$...$$`.
-4. **✅ Итоговый ответ (и формат для поля ввода DiSpace):**
-   - Классическая математическая запись: `Ответ: ...`
-   - Строка для ввода в поле DiSpace (если текстовый ответ: например `18*x^(3)-4*x^(-3)` или `-1/2`, либо точный выбор верных пунктов из предложенных вариантов).
+   Все строчные формулы оформляй в `$...$`, а выносные формулы, пределы, дроби и матрицы — на отдельных строках в `$$...$$`.
+
+КРИТИЧЕСКОЕ ПРАВИЛО ДЛЯ ТЕСТОВ С ВАРИАНТАМИ ОТВЕТОВ:
+Если в задании предложены варианты ответов (Вариант 1, 2, 3, 4 или А, Б, В, Г):
+ОБЯЗАТЕЛЕН метод последовательного отсева (элиминации) каждого варианта!
+В ходе решения обязательно сделай раздел:
+«🔍 Анализ и отбор вариантов ответа:»
+Для КАЖДОГО варианта по порядку:
+- Запиши формулу варианта;
+- Сравни её с точным теоретическим выводом;
+- Если вариант НЕВЕРНЫЙ: напиши точную математическую причину ошибки (например: «не та переменная под пределом», «ошибка в знаке», «неверно вычислено $f(t_0)$», «лишняя единица в числителе»);
+- Если вариант ВЕРНЫЙ: строго покажи его полное соответствие теории и определению.
+
+4. **✅ Итоговый ответ:**
+   - Если в задании были варианты ответов:
+     `Ответ: Вариант N ($формула$)`
+     `Строка для выбора/ввода в DiSpace: N` (укажи точный номер или букву верного варианта).
+   - Если расчётная задача с открытым вводом:
+     `Ответ: ...`
+     `Строка для ввода в поле DiSpace: ...` (в формате для системы, например: `-1/2` или `18*x^(3)-4*x^(-3)`).
 
 Если студент прислал свой вариант ответа или решения на проверку — сначала внимательно проверь его: похвали за верные шаги, укажи точную строчку с ошибкой (если она есть) и затем приведи полное эталонное тетрадное решение."""
 
@@ -285,8 +351,22 @@ class Tutor:
             else clean_question
         )
 
+        is_followup = bool(not images and _is_followup_question(clean_question, history))
+
         if task and task != "vision":
             resolved_task = task
+        elif is_followup:
+            # Наследуем режим задачи от предыдущего хода диалога, если решалась математика или код
+            last_assistant_msg = ""
+            for m in reversed(history or []):
+                if m.get("role") == "assistant" and m.get("content"):
+                    last_assistant_msg = m["content"]
+                    break
+            has_math_context = any(
+                ind in last_assistant_msg
+                for ind in ("$", "\\lim", "\\frac", "\\int", "\\sqrt", "Дано", "Ход решения", "Ответ:", "Вариант")
+            )
+            resolved_task = "math" if has_math_context else "chat"
         else:
             resolved_task = classify(combined_query, has_images=False)
 
@@ -300,7 +380,7 @@ class Tutor:
             parts.append("РАСПОЗНАННЫЙ ТЕКСТ И ФОРМУЛЫ С ФОТО:\n" + extracted_image_text)
             used = "фото"
 
-        is_meta = not extracted_image_text and _is_meta_or_conversational(clean_question)
+        is_meta = not extracted_image_text and not is_followup and _is_meta_or_conversational(clean_question)
         if is_meta:
             loaded_courses = self.store.list_courses()
             if loaded_courses:
@@ -308,6 +388,9 @@ class Tutor:
                     "ДОСТУПНЫЕ СЕЙЧАС В БАЗЕ КУРСЫ СТУДЕНТА:\n"
                     + "\n".join(f"- {c}" for c in loaded_courses)
                 )
+        elif is_followup:
+            # При уточняющем вопросе не ищем вслепую по стоп-словам вроде «знак минус», сохраняем контекст предыдущего решения
+            used = "контекст диалога"
         else:
             hits = self.store.search(combined_query, k=4, course=course, min_score=2.0)
             if hits:
@@ -338,7 +421,7 @@ class Tutor:
                     used = "фото + материалы" if extracted_image_text else "материалы"
 
         web_results: list[SearchResult] = []
-        if use_web and not is_meta:
+        if use_web and not is_meta and not is_followup:
             try:
                 web_context, web_results = self.search.context(combined_query, limit=4)
                 if web_context:
@@ -352,13 +435,36 @@ class Tutor:
             prompt_parts.append("\n\n".join(parts))
 
         display_problem = combined_query if extracted_image_text else clean_question
-        if resolved_task == "math":
+        if is_followup:
+            prompt_parts.append(
+                f"УТОЧНЯЮЩИЙ ВОПРОС СТУДЕНТА ПО ПРЕДЫДУЩЕМУ РЕШЕНИЮ:\n{clean_question}\n\n"
+                f"ИНСТРУКЦИЯ ПО ОТВЕТУ:\n"
+                f"1. Ответь строго в контексте ранее разобранной выше задачи и твоего решения из истории диалога.\n"
+                f"2. Подробно и понятно объясни математическую причину, знак, формулу или логический переход, о котором спрашивает студент (почему именно так, какое правило или тождество применено).\n"
+                f"3. Все строчные формулы оформляй строго в `$...$`, а крупные выносные выкладки — на отдельных строках в `$$...$$`.\n"
+                f"4. Не начинай решение задачи заново с нуля — сфокусируйся на разъяснении шага, вызвавшего вопрос."
+            )
+        elif resolved_task == "math":
+            has_options = bool(re.search(r"(?i)(?:вариант\s*\d|\b[1-4]\)\s*|^\s*[-*]\s*(?:вариант|[A-DА-Г]\)))", display_problem, re.M))
+            inst_steps = [
+                f"1. В начале ответа обязательно укажи дисциплину «{primary_course or 'Математика'}» и тему лекции, откуда берётся теоретическая база, выпиши формулу в LaTeX и укажи ссылку на фрагмент [#{hits[0][0].id if (not is_meta and hits) else 'источник'}].",
+                "2. Подробно распиши ход решения по шагам, подставляя данные задачи в формулу из лекции.",
+            ]
+            if has_options:
+                inst_steps.append(
+                    "3. В задании даны варианты ответов! ОБЯЗАТЕЛЕН метод отсева: подробно разбери КАЖДЫЙ вариант (1..N), обоснуй ошибку неверных и строго докажи правильный вариант."
+                )
+                inst_steps.append(
+                    "4. В конце отдельной строкой напиши однозначный «Ответ: Вариант N (формула)» и укажи номер варианта для ввода/выбора в DiSpace."
+                )
+            else:
+                inst_steps.append(
+                    "3. В конце отдельной строкой напиши однозначный «Ответ: ...» (например: «Ответ: -1/2» или «Ответ: 18*x^(3)-4*x^(-3)»)."
+                )
             prompt_parts.append(
                 f"УСЛОВИЕ ЗАДАЧИ:\n{display_problem}\n\n"
                 f"ИНСТРУКЦИЯ К РЕШЕНИЮ:\n"
-                f"1. В начале ответа обязательно укажи дисциплину «{primary_course or 'Математика'}» и тему лекции, откуда берётся теоретическая база, выпиши формулу в LaTeX и укажи ссылку на фрагмент [#{hits[0][0].id if (not is_meta and hits) else 'источник'}].\n"
-                f"2. Подробно распиши ход решения по шагам, подставляя данные задачи в формулу из лекции.\n"
-                f"3. В конце отдельной строкой напиши однозначный «Ответ: ...» (например: «Ответ: вариант 4»)."
+                + "\n".join(inst_steps)
             )
         else:
             prompt_parts.append(f"ВОПРОС:\n{clean_question}")
@@ -393,9 +499,9 @@ class Tutor:
 
         # Проверка (SymPy) запускается для расчётных/кодовых задач в фоне за <0.05 с без выгрузки модели из VRAM
         should_verify = (
-            (resolved_task in self.verify_tasks)
+            (resolved_task in self.verify_tasks and not is_followup)
             if verify is None
-            else (bool(verify) and resolved_task in self.verify_tasks)
+            else (bool(verify) and resolved_task in self.verify_tasks and not is_followup)
         )
         report = None
         if should_verify and answer_text:
@@ -503,7 +609,11 @@ class Tutor:
         q_block = f"УСЛОВИЕ ЗАДАНИЯ:\n{question_text.strip()}"
         if options:
             opts_lines = [f"- Вариант {idx}: {opt.get('text', '')}" for idx, opt in enumerate(options, 1)]
-            q_block += "\n\nВАРИАНТЫ ОТВЕТА:\n" + "\n".join(opts_lines)
+            q_block += (
+                "\n\nВАРИАНТЫ ОТВЕТА В ТЕСТЕ:\n" + "\n".join(opts_lines)
+                + f"\n\n⚠️ ВНИМАНИЕ: Обязательно примени метод отсева! В решении подробно разбери КАЖДЫЙ вариант (1..{len(options)}), "
+                f"обоснуй математическую ошибку неверных и строго докажи правильный вариант. В блоке «Итоговый ответ» напиши: «Ответ: Вариант N ($формула$)» и точный номер для выбора в DiSpace."
+            )
         prompt_parts.append(q_block)
 
         if student_attempt.strip():
@@ -534,6 +644,42 @@ class Tutor:
             solver_model=result.model,
             use_model=False,
         )
+
+        # Автоматическая самокоррекция: если SymPy обнаружил ошибку в решении, делаем один корректирующий шаг
+        if report and any(c.status == "fail" and c.expected for c in report.checks):
+            failed_checks = [c for c in report.checks if c.status == "fail" and c.expected]
+            feedback = "\n".join(f"- {c.detail} (ожидалось: {c.expected})" for c in failed_checks)
+            correction_prompt = (
+                f"ВНИМАНИЕ! Автоматическая математическая проверка (SymPy) нашла ошибку в твоём ответе:\n"
+                f"{feedback}\n\n"
+                f"Пожалуйста, перепроверь вычисления и исходную формулу, найди ошибку и выдай "
+                f"исправленное тетрадное решение с верным ответом."
+            )
+            try:
+                corr_res = self.llm.chat(
+                    [
+                        {"role": "system", "content": NOTEBOOK_SOLUTION_SYSTEM},
+                        {"role": "user", "content": "\n\n".join(prompt_parts)},
+                        {"role": "assistant", "content": answer_text},
+                        {"role": "user", "content": correction_prompt},
+                    ],
+                    task="math",
+                    text_hint=question_text,
+                    on_stream=on_stream,
+                )
+                corr_text = format_math_markdown(_strip_prompt_echo(corr_res.text, NOTEBOOK_SOLUTION_SYSTEM))
+                corr_report = self.verifier.verify(
+                    problem=question_text,
+                    solution=corr_text,
+                    solver_model=corr_res.model,
+                    use_model=False,
+                )
+                if corr_report and (corr_report.ok or not any(c.status == "fail" for c in corr_report.checks)):
+                    answer_text = corr_text
+                    report = corr_report
+                    result = corr_res
+            except Exception:
+                pass
         return Answer(
             question=question_text,
             text=answer_text,

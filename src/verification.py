@@ -140,6 +140,8 @@ _LATEX_SUBS = (
     (r"\\boxed", ""),
     (r"\\text\s*\{([^{}]*)\}", r"\1"),
     (r"\\mathrm|\\mathbf|\\operatorname", ""),
+    (r"\\Delta\s*([a-zA-Z])", r"d\1"),
+    (r"\\lim\b", "lim"),
     (r"\\cdot|\\times", "*"),
     (r"\\div", "/"),
     (r"\\pi", "pi"),
@@ -170,8 +172,12 @@ def _sympify(expr: str) -> Any:
         return None
     cleaned = latex_to_text(expr)
     cleaned = cleaned.replace("×", "*").replace("÷", "/").replace("−", "-").replace(",", ".")
-    # Убираем единицы измерения и слова.
-    cleaned = re.sub(r"(?<=[0-9.\s)])[а-яА-Яa-zA-Z]{2,}", "", cleaned)
+    # Убираем префиксы вариантов и номеров
+    cleaned = re.sub(r"(?i)\b(?:вариант|пункт|номер|option|choice)\s*[:#№]?\s*", " ", cleaned)
+    # Убираем слова на кириллице (они не являются переменными в математических формулах)
+    cleaned = re.sub(r"[а-яА-ЯёЁ]+", " ", cleaned)
+    # Убираем единицы измерения и латинские текстовые слова от 2 букв (кроме математических функций)
+    cleaned = re.sub(r"(?<=[0-9.\s)])(?!(?:sin|cos|tan|tg|cot|ctg|log|exp|sqrt)\b)[a-zA-Z]{2,}", "", cleaned)
     cleaned = cleaned.strip(" .,;:")
     if not cleaned:
         return None
@@ -235,6 +241,7 @@ def _answer_expressions(answer: str) -> list[Any]:
     """Кандидаты-ответы с сохранением символов: для производных и интегралов."""
     text = latex_to_text(answer)
     text = re.sub(r"(?i)^\s*(ответ|answer|итог)\s*[:：]\s*", "", text).strip()
+    text = re.sub(r"(?i)\b(?:вариант|пункт|номер|option|choice)\s*[:#№]?\s*", "", text).strip()
     text = re.sub(r"\+\s*C\b", "", text)  # константа интегрирования
     text = text.strip(" .;:")
 
@@ -490,10 +497,27 @@ def _check_derivative(problem: str, answer: str) -> Check | None:
     lowered = problem.lower()
     if "производн" not in lowered and "d/dx" not in lowered:
         return None
+    # Если задача требует выбрать вариант предела или формулу определения (тест с вариантами)
+    is_choice_task = (
+        any(w in lowered for w in ("выбрать", "выберите", "какой предел", "какой из вариантов", "укажите предел"))
+        or bool(re.search(r"\bвариант", lowered))
+    )
+    if is_choice_task and any(w in lowered for w in ("предел", "определен")):
+        # Для заданий на определение производной через предел не требуем прямого численного дифференцирования
+        return Check("sympy", "skipped", "выбор варианта предела по определению производной")
+
     match = re.search(r"(?:производн\w*|d/dx)\s*(?:функции|от)?\s*[:：]?\s*(.+)", problem, re.IGNORECASE)
     if not match:
         return None
-    expr_src = match.group(1).split("=")[0]
+    raw_after = match.group(1).strip()
+    if "=" in raw_after:
+        eq_parts = raw_after.split("=")
+        if re.match(r"^\s*[a-zA-Z](?:\s*\([a-zA-Z]\))?\s*$", eq_parts[0]):
+            expr_src = eq_parts[1]
+        else:
+            expr_src = eq_parts[0]
+    else:
+        expr_src = raw_after
     expr = _sympify(expr_src)
     if expr is None:
         return None
@@ -504,10 +528,36 @@ def _check_derivative(problem: str, answer: str) -> Check | None:
         expected = sp.diff(expr, symbols[0])
     except Exception as exc:
         return Check("sympy", "error", f"не удалось продифференцировать: {exc}")
-    got_values = _answer_expressions(answer) or [None]
-    for got in got_values:
-        if got is None:
-            continue
+
+    # Проверяем, задана ли точка вычисления x_0 / t_0
+    point_match = re.search(r"в\s+точке\s*([a-zA-Z0-9_]+)?\s*=\s*(-?\d+(?:\.\d+)?)", lowered)
+    expected_at_point = None
+    if point_match:
+        try:
+            pt_val = _sympify(point_match.group(2))
+            if pt_val is not None:
+                expected_at_point = expected.subs(symbols[0], pt_val)
+        except Exception:
+            pass
+
+    got_values = _answer_expressions(answer) or []
+    valid_gots = [g for g in got_values if g is not None]
+    if not valid_gots:
+        num_gots = _parse_answer_numbers(answer)
+        if expected_at_point is not None and num_gots:
+            if any(_numbers_match(expected_at_point, v) for v in num_gots):
+                return Check("sympy", "pass", f"производная в точке пересчитана: {expected_at_point}")
+            return Check(
+                "sympy",
+                "fail",
+                f"производная в точке = {expected_at_point}, в ответе {num_gots[0]}",
+                str(expected_at_point),
+            )
+        if is_choice_task:
+            return Check("sympy", "skipped", "выбор варианта из предложенных в тесте", str(expected))
+        return Check("sympy", "skipped", "ответ не разобран как аналитическое выражение производной", str(expected))
+
+    for got in valid_gots:
         try:
             if sp.simplify(expected - got) == 0:
                 return Check("sympy", "pass", f"производная пересчитана: {expected}")
@@ -515,7 +565,16 @@ def _check_derivative(problem: str, answer: str) -> Check | None:
             pass
         if _numbers_match(expected, got):
             return Check("sympy", "pass", f"производная пересчитана: {expected}")
-    return Check("sympy", "fail", f"производная = {expected}, в ответе {got_values[0]}", str(expected))
+        if expected_at_point is not None:
+            try:
+                if sp.simplify(expected_at_point - got) == 0 or _numbers_match(expected_at_point, got):
+                    return Check("sympy", "pass", f"производная в точке пересчитана: {expected_at_point}")
+            except Exception:
+                pass
+
+    if is_choice_task:
+        return Check("sympy", "skipped", "выбор варианта из предложенных в тесте", str(expected))
+    return Check("sympy", "fail", f"производная = {expected}, в ответе {valid_gots[0]}", str(expected))
 
 
 def _check_integral(problem: str, answer: str) -> Check | None:
@@ -539,10 +598,17 @@ def _check_integral(problem: str, answer: str) -> Check | None:
         expected = sp.integrate(expr, symbols[0])
     except Exception as exc:
         return Check("sympy", "error", f"не удалось проинтегрировать: {exc}")
-    got_values = _answer_expressions(answer) or [None]
-    for got in got_values:
-        if got is None:
-            continue
+    got_values = _answer_expressions(answer) or []
+    valid_gots = [g for g in got_values if g is not None]
+    if not valid_gots:
+        num_gots = _parse_answer_numbers(answer)
+        if num_gots and not getattr(expected, "free_symbols", set()):
+            if any(_numbers_match(expected, v) for v in num_gots):
+                return Check("sympy", "pass", f"определённый интеграл совпал: {expected}")
+            return Check("sympy", "fail", f"интеграл = {expected}, в ответе {num_gots[0]}", str(expected))
+        return Check("sympy", "skipped", "ответ не разобран как аналитическое выражение интеграла", str(expected))
+
+    for got in valid_gots:
         try:
             if sp.simplify(expected - got) == 0:
                 return Check("sympy", "pass", f"интеграл проверен дифференцированием: {expected}")
@@ -550,7 +616,7 @@ def _check_integral(problem: str, answer: str) -> Check | None:
             continue
         if _numbers_match(expected, got):
             return Check("sympy", "pass", f"интеграл совпал: {expected}")
-    return Check("sympy", "fail", f"интеграл = {expected}, в ответе {got_values[0]}", str(expected))
+    return Check("sympy", "fail", f"интеграл = {expected}, в ответе {valid_gots[0]}", str(expected))
 
 
 def _check_arithmetic(problem: str, answer: str) -> Check | None:
