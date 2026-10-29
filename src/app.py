@@ -260,8 +260,15 @@ def open_dispace_browser_login_dialog(is_cloud_env: bool) -> None:
 
 
 @st.dialog("📖 Читалка учебного материала", width="large")
-def open_material_reader_dialog(title: str, course: str, url: str, full_text: str) -> None:
+def open_material_reader_dialog(
+    title: str,
+    course: str,
+    url: str = "",
+    full_text: str = "",
+    text: str = "",
+) -> None:
     """Отдельное полноэкранное окно для комфортного чтения длинных лекций и методичек с пагинацией."""
+    full_text = full_text or text
     st.markdown(f"#### {title}")
     st.caption(f"Курс: **{course}** · Всего символов: `{len(full_text):,}`".replace(",", " ") + (f" · [Открыть в DiSpace]({url})" if url else ""))
 
