@@ -93,6 +93,7 @@ CLOUD_PROVIDERS: dict[str, dict[str, Any]] = {
             "llama-3.1-8b-instant",
             "mixtral-8x7b-32768",
             "gemma2-9b-it",
+            "deepseek-r1-distill-llama-70b",
         ],
         "default_model": "llama-3.3-70b-versatile",
         "key_url": "https://console.groq.com/keys",
@@ -116,18 +117,64 @@ CLOUD_PROVIDERS: dict[str, dict[str, Any]] = {
             "meta-llama/llama-3.3-70b-instruct:free",
             "google/gemini-2.0-flash-exp:free",
             "qwen/qwen-2.5-72b-instruct:free",
+            "mistralai/mistral-7b-instruct:free",
         ],
         "default_model": "deepseek/deepseek-r1:free",
         "key_url": "https://openrouter.ai/keys",
     },
+    "openai": {
+        "name": "🤖 OpenAI (официальный ChatGPT / GPT-4o)",
+        "base_url": "https://api.openai.com/v1",
+        "models": [
+            "gpt-4o-mini",
+            "gpt-4o",
+            "o3-mini",
+        ],
+        "default_model": "gpt-4o-mini",
+        "key_url": "https://platform.openai.com/api-keys",
+    },
     "custom": {
         "name": "🛠️ Свой OpenAI-совместимый сервер",
-        "base_url": "https://api.openai.com/v1",
+        "base_url": "http://localhost:8000/v1",
         "models": ["gpt-4o-mini", "custom-model"],
         "default_model": "gpt-4o-mini",
         "key_url": "",
     },
 }
+
+
+def fetch_cloud_models(base_url: str, api_key: str, timeout: float = 5.0) -> list[str]:
+    """Запросить реальный актуальный список моделей с сервера провайдера по API-ключу."""
+    if not base_url or not api_key:
+        return []
+    clean_url = base_url.strip().rstrip("/")
+    endpoint = f"{clean_url}/models"
+    headers = {
+        "Authorization": f"Bearer {api_key.strip()}",
+        "Content-Type": "application/json",
+    }
+    if "openrouter" in clean_url.lower():
+        headers["HTTP-Referer"] = "https://github.com/sosiskacorp/DIBot"
+        headers["X-Title"] = "DIBot Education Assistant"
+    try:
+        resp = requests.get(endpoint, headers=headers, timeout=timeout)
+        if resp.ok:
+            data = resp.json()
+            items = data.get("data") or data.get("models") or []
+            models: list[str] = []
+            for it in items:
+                mid = str(it.get("id") or it.get("name") or "").strip()
+                if mid:
+                    models.append(mid)
+            if "openrouter" in clean_url.lower():
+                # Поднимаем бесплатные :free модели наверх списка
+                free_m = [m for m in models if ":free" in m]
+                other_m = [m for m in models if ":free" not in m]
+                return sorted(free_m) + other_m[:40]
+            return sorted(models)
+    except Exception:
+        pass
+    return []
 
 
 class LLMClient:
@@ -589,7 +636,32 @@ class LLMClient:
             else:
                 oai_messages.append({"role": role, "content": content})
 
-        model_name = (model_override or self.cloud_model or "").strip() or "llama-3.3-70b-versatile"
+        model_name = (model_override or self.cloud_model or "").strip()
+        base_lower = self.cloud_base_url.lower()
+
+        # Автоматическая защита от несовпадения имени модели и провайдера:
+        if "openai.com" in base_lower:
+            if not model_name or any(s in model_name.lower() for s in ("llama", "deepseek", "qwen", "mistral")):
+                model_name = "gpt-4o-mini"
+        elif "googleapis.com" in base_lower:
+            if not model_name or any(s in model_name.lower() for s in ("llama", "gpt", "deepseek", "qwen")):
+                model_name = "gemini-2.0-flash"
+        elif "openrouter.ai" in base_lower:
+            if not model_name or ("/" not in model_name and not model_name.startswith("gpt")):
+                if "llama" in model_name.lower():
+                    model_name = "meta-llama/llama-3.3-70b-instruct:free"
+                elif "deepseek" in model_name.lower():
+                    model_name = "deepseek/deepseek-r1:free"
+                else:
+                    model_name = "deepseek/deepseek-r1:free"
+        elif "groq.com" in base_lower:
+            if "/" in model_name:
+                model_name = model_name.split("/")[-1].replace(":free", "")
+            if not model_name or any(s in model_name.lower() for s in ("gpt", "gemini")):
+                model_name = "llama-3.3-70b-versatile"
+        elif not model_name:
+            model_name = "llama-3.3-70b-versatile"
+
         do_stream = on_stream is not None and not json_format
 
         payload: dict[str, Any] = {
@@ -619,7 +691,13 @@ class LLMClient:
                 timeout=timeout,
             )
             if not resp.ok:
-                raise LLMError(f"Ошибка облачного API ({resp.status_code}): {resp.text[:300]}")
+                err_text = resp.text[:400]
+                if resp.status_code == 404 or "model_not_found" in err_text:
+                    raise LLMError(
+                        f"Модель «{model_name}» не найдена на сервере {self.cloud_base_url}. "
+                        "В боковом меню выберите актуальную модель или нажмите «Загрузить модели»."
+                    )
+                raise LLMError(f"Ошибка облачного API ({resp.status_code}): {err_text}")
             data = resp.json()
             elapsed = time.perf_counter() - started
             choice = (data.get("choices") or [{}])[0]
@@ -646,7 +724,13 @@ class LLMClient:
                 stream=True,
             )
             if not resp.ok:
-                raise LLMError(f"Ошибка облачного API ({resp.status_code}): {resp.text[:300]}")
+                err_text = resp.text[:400]
+                if resp.status_code == 404 or "model_not_found" in err_text:
+                    raise LLMError(
+                        f"Модель «{model_name}» не найдена на сервере {self.cloud_base_url}. "
+                        "В боковом меню выберите актуальную модель или нажмите «Загрузить модели»."
+                    )
+                raise LLMError(f"Ошибка облачного API ({resp.status_code}): {err_text}")
         except requests.RequestException as exc:
             raise LLMError(f"Ошибка подключения к облачному API: {exc}") from exc
 

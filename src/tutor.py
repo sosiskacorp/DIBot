@@ -240,7 +240,7 @@ class Tutor:
         on_stream: Any = None,
     ) -> Answer:
         started = time.perf_counter()
-        if history and len(history) > 6:
+        if history and (len(history) >= 6 or sum(len(m.get("content", "")) for m in history) >= 4500):
             history = self.compact_history(history, keep_recent=3)
         clean_question = (question or "").strip() or "Разбери и реши задание на изображении."
         extracted_image_text = ""

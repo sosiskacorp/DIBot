@@ -102,7 +102,7 @@ from lms_reader import (  # noqa: E402
 from materials import MaterialStore, slugify  # noqa: E402
 from notes import NoteBuilder  # noqa: E402
 from tutor import Answer, Tutor  # noqa: E402
-from llm_client import CLOUD_PROVIDERS  # noqa: E402
+from llm_client import CLOUD_PROVIDERS, fetch_cloud_models  # noqa: E402
 
 st.set_page_config(
     page_title="DIBot — учебный ассистент НГТУ",
@@ -777,7 +777,7 @@ with st.sidebar:
             st.warning("☁️ Настройте бесплатный облачный API ниже")
 
         with st.expander("⚙️ Настройка облачной модели", expanded=not bool(cur_cloud_key)):
-            st.caption("Используйте бесплатные модели из Groq, Google Gemini или OpenRouter со стримингом ответа.")
+            st.caption("Подключение бесплатных облачных моделей (Groq, Gemini, OpenRouter, OpenAI) со стримингом.")
             prov_keys = list(CLOUD_PROVIDERS.keys())
             saved_cp = st.session_state.get("session_cloud_provider", "groq")
             cp_idx = prov_keys.index(saved_cp) if saved_cp in prov_keys else 0
@@ -787,7 +787,15 @@ with st.sidebar:
                 index=cp_idx,
                 format_func=lambda k: CLOUD_PROVIDERS[k]["name"],
             )
-            st.session_state["session_cloud_provider"] = chosen_cp
+
+            # При смене провайдера в селекте синхронизируем URL и рекомендуемую модель
+            if chosen_cp != st.session_state.get("last_selected_cp"):
+                st.session_state["last_selected_cp"] = chosen_cp
+                st.session_state["session_cloud_provider"] = chosen_cp
+                st.session_state["session_cloud_url"] = CLOUD_PROVIDERS[chosen_cp]["base_url"]
+                st.session_state["session_cloud_model"] = CLOUD_PROVIDERS[chosen_cp]["default_model"]
+                st.session_state.pop("cached_cloud_models", None)
+
             cp_data = CLOUD_PROVIDERS[chosen_cp]
 
             if cp_data.get("key_url"):
@@ -797,12 +805,62 @@ with st.sidebar:
                 "API-ключ",
                 value=st.session_state.get("session_cloud_key", ""),
                 type="password",
-                placeholder="gsk_... / AIza... / sk-or-...",
+                placeholder="gsk_... / AIza... / sk-or-... / sk-...",
             )
 
-            known_models = cp_data.get("models") or []
+            # Автоопределение провайдера по формату ключа при вставке
+            raw_k = c_key.strip()
+            if raw_k:
+                if raw_k.startswith("gsk_") and chosen_cp != "groq":
+                    st.info("💡 Обнаружен ключ Groq — переключаю на Groq Cloud.")
+                    st.session_state["session_cloud_provider"] = "groq"
+                    st.session_state["last_selected_cp"] = "groq"
+                    st.session_state["session_cloud_url"] = CLOUD_PROVIDERS["groq"]["base_url"]
+                    st.session_state["session_cloud_model"] = CLOUD_PROVIDERS["groq"]["default_model"]
+                    st.session_state.pop("cached_cloud_models", None)
+                    st.rerun()
+                elif raw_k.startswith("sk-or-") and chosen_cp != "openrouter":
+                    st.info("💡 Обнаружен ключ OpenRouter — переключаю на OpenRouter.")
+                    st.session_state["session_cloud_provider"] = "openrouter"
+                    st.session_state["last_selected_cp"] = "openrouter"
+                    st.session_state["session_cloud_url"] = CLOUD_PROVIDERS["openrouter"]["base_url"]
+                    st.session_state["session_cloud_model"] = CLOUD_PROVIDERS["openrouter"]["default_model"]
+                    st.session_state.pop("cached_cloud_models", None)
+                    st.rerun()
+                elif raw_k.startswith("AIza") and chosen_cp != "gemini":
+                    st.info("💡 Обнаружен ключ Google AI Studio — переключаю на Gemini.")
+                    st.session_state["session_cloud_provider"] = "gemini"
+                    st.session_state["last_selected_cp"] = "gemini"
+                    st.session_state["session_cloud_url"] = CLOUD_PROVIDERS["gemini"]["base_url"]
+                    st.session_state["session_cloud_model"] = CLOUD_PROVIDERS["gemini"]["default_model"]
+                    st.session_state.pop("cached_cloud_models", None)
+                    st.rerun()
+
+            c_url = st.text_input("Base URL", value=st.session_state.get("session_cloud_url") or cp_data["base_url"])
+
+            # Кнопка запроса актуального списка моделей прямо с сервера провайдера
+            col_b1, col_b2 = st.columns([1, 1])
+            with col_b1:
+                fetch_btn = st.button("🔄 Загрузить модели", width="stretch", help="Запросить список моделей по этому API-ключу")
+            with col_b2:
+                save_btn = st.button("💾 Сохранить", type="primary", width="stretch")
+
+            if fetch_btn and raw_k:
+                with st.spinner("Запрашиваю список моделей с сервера…"):
+                    real_models = fetch_cloud_models(c_url, raw_k)
+                if real_models:
+                    st.session_state["cached_cloud_models"] = real_models
+                    st.success(f"✅ Доступно {len(real_models)} реальных моделей!")
+                else:
+                    st.error("Не удалось получить список моделей. Проверьте ключ и URL.")
+
+            known_models = st.session_state.get("cached_cloud_models") or cp_data.get("models") or []
             cur_mod = st.session_state.get("session_cloud_model") or cp_data.get("default_model") or ""
-            m_idx = known_models.index(cur_mod) if cur_mod in known_models else 0
+            if cur_mod in known_models:
+                m_idx = known_models.index(cur_mod)
+            else:
+                m_idx = 0
+
             selected_mod_item = st.selectbox(
                 "Модель",
                 known_models + ["Ввести имя вручную…"],
@@ -813,18 +871,17 @@ with st.sidebar:
             else:
                 chosen_mod_name = selected_mod_item
 
-            default_url = cp_data.get("base_url", "https://api.groq.com/openai/v1")
-            c_url = st.text_input("Base URL", value=st.session_state.get("session_cloud_url") or default_url)
-
-            if st.button("Сохранить параметры облачной модели", type="primary", width="stretch"):
-                st.session_state["session_cloud_key"] = c_key.strip()
+            if save_btn:
+                st.session_state["session_cloud_key"] = raw_k
                 st.session_state["session_cloud_url"] = c_url.strip()
                 st.session_state["session_cloud_model"] = chosen_mod_name.strip()
+                st.success("Параметры облачной модели сохранены!")
                 st.rerun()
 
             if cur_cloud_key:
                 if st.button("Отключить облачный API", width="stretch"):
                     st.session_state["session_cloud_key"] = ""
+                    st.session_state.pop("cached_cloud_models", None)
                     st.rerun()
     else:
         if status["ok"]:
@@ -972,37 +1029,15 @@ tabs = st.tabs(
 with tabs[0]:
     _init_chat_sessions()
 
-    # Панель заголовка текущего диалога с индикатором токенов и кнопкой сжатия контекста
-    col_hdr1, col_hdr2 = st.columns([4, 1.3])
-    with col_hdr1:
-        active_sess = next(
-            (s for s in st.session_state.get("chat_sessions", []) if s["id"] == st.session_state.get("active_chat_id")),
-            None,
-        )
-        active_title = active_sess["title"] if active_sess else "Диалог"
-        turns_cnt = len(st.session_state.chat_turns)
-        est_tokens = sum(len(str(t.get("content", ""))) for t in st.session_state.chat_turns) // 4
-        st.caption(f"💬 **{active_title}** · Реплик: {turns_cnt} · ~{est_tokens:,} токенов".replace(",", " "))
-    with col_hdr2:
-        if turns_cnt >= 4:
-            if st.button("🗜️ Сжать контекст", key="btn_compact_session_top", help="Суммаризировать старые реплики для освобождения контекстного окна"):
-                with st.spinner("Сжимаю контекст диалога…"):
-                    tutor = get_tutor()
-                    hist_for_compact = []
-                    for t in st.session_state.chat_turns:
-                        c = t.get("content", "")
-                        if not c and t.get("answer"):
-                            c = t["answer"].text
-                        if c:
-                            hist_for_compact.append({"role": t.get("role", "user"), "content": c})
-                    compacted = tutor.compact_history(hist_for_compact, keep_recent=2)
-                    new_turns = []
-                    for m in compacted:
-                        new_turns.append({"role": m["role"], "content": m["content"]})
-                    st.session_state.chat_turns = new_turns
-                    _save_active_chat_turns()
-                    st.toast("Контекст диалога успешно сжат!", icon="🗜️")
-                    st.rerun()
+    # Информационная строка текущего диалога с индикатором токенов (компактизация работает автоматически)
+    active_sess = next(
+        (s for s in st.session_state.get("chat_sessions", []) if s["id"] == st.session_state.get("active_chat_id")),
+        None,
+    )
+    active_title = active_sess["title"] if active_sess else "Диалог"
+    turns_cnt = len(st.session_state.chat_turns)
+    est_tokens = sum(len(str(t.get("content", ""))) for t in st.session_state.chat_turns) // 4
+    st.caption(f"💬 **{active_title}** · Реплик: {turns_cnt} · ~{est_tokens:,} токенов · ⚡ автосжатие контекста активно".replace(",", " "))
 
     # Приветственный экран и быстрые подсказки, когда чат пуст
     if not st.session_state.chat_turns:
@@ -1143,9 +1178,44 @@ with tabs[0]:
             or ("📷 Разбери и реши задание на прикреплённом фото." if attached_images else "🎬 Прикреплено видео.")
         )
 
+        # Автоматическая компактизация сессии при накоплении контекста (если это необходимо)
+        source_turns = st.session_state.chat_turns[:-1] if is_retry_run else st.session_state.chat_turns
+        total_prev_chars = sum(len(str(t.get("content", ""))) for t in source_turns)
+        if len(source_turns) >= 6 or total_prev_chars >= 4500:
+            keep_recent = 3
+            if len(source_turns) > keep_recent:
+                older = source_turns[:-keep_recent]
+                recent = source_turns[-keep_recent:]
+                hist_for_compact = []
+                for t in older:
+                    c = t.get("content", "")
+                    if not c and t.get("answer"):
+                        c = t["answer"].text
+                    if c:
+                        hist_for_compact.append({"role": t.get("role", "user"), "content": c})
+                if hist_for_compact:
+                    compacted = get_tutor().compact_history(hist_for_compact, keep_recent=0)
+                    summary_text = ""
+                    if compacted:
+                        summary_text = compacted[0].get("content", "")
+                    if summary_text:
+                        synthetic_turn = {"role": "user", "content": summary_text, "images": [], "videos": []}
+                        if is_retry_run:
+                            st.session_state.chat_turns = [
+                                synthetic_turn,
+                                *recent,
+                                st.session_state.chat_turns[-1],
+                            ]
+                        else:
+                            st.session_state.chat_turns = [
+                                synthetic_turn,
+                                *recent,
+                            ]
+                        _save_active_chat_turns()
+                        source_turns = st.session_state.chat_turns[:-1] if is_retry_run else st.session_state.chat_turns
+
         # Собираем историю предыдущих реплик для многошагового контекста
         history_messages: list[dict[str, str]] = []
-        source_turns = st.session_state.chat_turns[:-1] if is_retry_run else st.session_state.chat_turns
         for prev in source_turns[-8:]:
             role = prev["role"]
             if role == "user":
