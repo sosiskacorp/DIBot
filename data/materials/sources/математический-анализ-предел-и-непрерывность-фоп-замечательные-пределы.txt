@@ -1,0 +1,322 @@
+### Первый замечательный предел
+
+Вычислим предел \(\lim\limits_{x\to 0}\frac{\sin x}{x}\). Функция \(\frac{\sin x}{x}\) не определена при \(x=0\). Вычисление предела этой функции при \(x\to 0\) приводит к неопределенности \(\frac{0}{0}\). Докажем, что
+
+\(\lim\limits_{x\to 0}\frac{\sin x}{x}=1\).
+
+Рассмотрим круг с единичным радиусом и центром в начале координат. Радианную меру центрального угла этого круга обозначим $x$. Рассмотрим $0 < x < \frac{\pi}{2}$, при таких значениях $x$ значения $\sin x>0$.
+
+Из рисунка видно, что площадь сектора $OAC$ заключена между площадями треугольников $OAC$ и $ODC$:
+
+$S_{\triangle OAC}<S<S_{\triangle ODC}$
+
+$ \frac{1}{2}\left| OC \right|\left| AM \right|<\frac{1}{2}{{\left| OA \right|}^{2}}x<\frac{1}{2}\left| OC \right|\left| DC \right|$.
+
+Учитывая, что \(\left| OA \right|=|OC|=1\), \(\left| AM \right|=\sin x\), \(\left| DC \right|=\operatorname{tg}x\), получим неравенство:
+
+\(\sin x<x<\operatorname{tg}x\)
+
+Разделим все части неравенства на $\sin x>0$ :
+
+\(1<\frac{x}{\sin x}<\frac{1}{\cos x}\)
+
+Учитывая, что все части неравенства положительные, запишем:
+
+\(\cos x<\frac{\sin x}{x}<1\)
+
+В силу четности функций \(\cos x\) и \(\frac{\sin x}{x}\) последнее двойное неравенство справедливо и для интервала \(\left( -\frac{\pi }{2},0 \right)\).
+
+Перейдем к пределу при \(x\to 0\) в последнем неравенстве
+
+$\lim\limits_{x\to 0}\cos x<\lim\limits_{x\to 0}\frac{\sin x}{x}<\lim\limits_{x\to 0}1$.
+
+Так как \(\lim\limits_{x\to 0}\cos x=1\) и \(\lim\limits_{x\to 0}1=1\), по теореме «о двух милиционерах» получаем
+
+\(\lim\limits_{x\to 0}\frac{\sin x}{x}=1\).
+
+Этот предел называют первым замечательным пределом. Его используют для раскрытия неопределенности \(\left[\frac{0}{0}\right]\).
+
+По теореме о пределе сложной функции первый замечательный предел на практике будем применять в следующем виде:
+
+\(\lim\limits_{\alpha(x)\to 0 \atop x\to x_0}\frac{\sin \alpha(x)}{\alpha(x)}=1\).
+
+### Следствия первого замечательного предела
+
+С помощью первого замечательного предела $\lim\limits_{x \to 0} \frac{{\sin x}}{x} = 1$ установим следующие следствия:
+
+$ \lim\limits_{x\to 0}\frac{\operatorname{tg}x}{x}=\lim\limits_{x\to 0}\frac{\sin x}{\underbrace{\cos x}_{\begin{matrix} \downarrow \\ 1 \\\end{matrix}}\cdot x} =1$,
+
+$ \lim\limits_{x \to 0}\frac{{\arcsin x}}{x}= \left| {\begin{array}{c}\arcsin x = t , \\ x = \sin t , \\ t \to 0\end{array} } \right| = \lim\limits_{t \to 0}\frac{t}{{\sin t}}= \lim\limits_{t \to 0}\frac{1}{{\frac{{\sin t}}{t}}}= 1 $,
+
+аналогично, $ \lim\limits_{x \to 0}\frac{{\operatorname{arctg}x}}{x}= 1$.
+
+$ \lim\limits_{x \to 0}\frac{{1 - \cos x}}{{\frac{{x^2 }}{2}}}= \lim\limits_{x \to 0}\frac{{2\sin ^2 \frac{x}{2}}}{{\frac{{x^2 }}{2}}}= \lim\limits_{x \to 0}\frac{{2\sin \frac{x}{2}\cdot \sin \frac{x}{2}}}{{2 \cdot \frac{x}{2}\cdot \frac{x}{2}}}= \lim\limits_{x \to 0}\frac{{\sin \frac{x}{2}}}{{\frac{x}{2}}}\cdot \lim\limits_{x \to 0}\frac{{\sin \frac{x}{2}}}{{\frac{x}{2}}}= 1$.
+
+Так же по теореме о пределе сложной функции верны пределы (и именно в таком виде будем применять их на практике для раскрытия неопределенностей):
+
+$\lim\limits_{x\to x_0 \atop \alpha(x)\to 0}\frac{\operatorname{tg}\alpha(x)}{\alpha(x)}=1$
+
+$ \lim\limits_{x\to x_0 \atop \alpha(x)\to 0}\frac{{\arcsin \alpha(x)}}{\alpha(x)}=1$
+
+$ \lim\limits_{x\to x_0 \atop \alpha(x)\to 0}\frac{{\operatorname{arctg}\alpha(x)}}{\alpha(x)}= 1$
+
+$ \lim\limits_{x\to x_0 \atop \alpha(x)\to 0}\frac{{1 - \cos \alpha(x)}}{{\frac{{\alpha(x)^2 }}{2}}}=1$
+
+Пример 1. Вычислить предел $\lim\limits_{x\to 0}\frac{\sin7x}{x}$.
+
+Р е ш е н и е.Так как $\sin7x\to 0$ при $x\to 0$, то имеет место неопределенность $\left[\frac00\right]$. Для использования первого замечательного предела домножим числитель и знаменатель дроби на 7:
+
+$\lim\limits_{x\to 0}\frac{\sin7x}{x}=\lim\limits_{x\to 0}\frac{7\sin7x}{7x}=7\lim\limits_{x\to 0}\frac{\sin7x}{7x}=7\cdot 1=7$.
+
+Пример 2. Вычислить предел $\lim\limits_{x\to 0}\frac{x}{{\rm tg}\,3x}$.
+
+Р е ш е н и е. Числитель и знаменатель дроби стремятся к нулю при $x\to 0$, имеет место неопределенность $\left[\frac00\right]$. Применим следствие первого замечательного предела, домножив числитель и знаменатель дроби на 3:
+
+$ \lim\limits_{x\to 0}\frac{x}{{\rm tg}\,3x}=\lim\limits_{x\to 0}\frac{3x}{3\cdot{\rm tg}\,3x}=\frac13\lim\limits_{x\to 0}\frac{1}{\frac{{\rm tg}\,3x}{3x}}=\frac13 $.
+
+Пример 3. Вычислить предел \(\lim\limits_{x\to 0}\frac{\sin \alpha x}{\sin \beta x}\), где (\(\alpha ,\ \beta \) – постоянные).
+
+Р е ш е н и е.
+
+\(\lim\limits_{x\to 0}\frac{\sin \alpha x}{\sin \beta x}=\left( \frac{0}{0} \right)=\lim\limits_{x\to 0}\frac{\alpha }{\beta }\frac{\frac{\sin \alpha x}{\alpha x}}{\frac{\sin \beta x}{\beta x}}=\frac{\alpha }{\beta }\frac{\lim\limits_{x\to 0}\frac{\sin \alpha x}{\alpha x}}{\lim\limits_{x\to 0}\frac{\sin \beta x}{\beta x}}=\frac{\alpha }{\beta }\)
+
+Чуть позже научимся вычислять такие пределы более коротким путем.
+
+### Второй замечательный предел
+
+Теорема (второй замечательный предел для функций)
+
+$\lim\limits_{x\to\infty}\left(1+\frac1x\right)^x=e$
+
+Доказательство. Сначала рассмотрим случай $x>1$. Действительное число $x$ представим следующим образом
+
+$x=n+\alpha$,
+
+где $n\in{\bf N}$ – натуральное число, а $0\leq\alpha < 1$. Тогда
+
+$n\leq x < n+1\;\Rightarrow\;\frac{1}{n+1} < \frac1x\leq\frac{1}{n}\;\Rightarrow\;1+\frac{1}{n+1} < 1+\frac1x\leq1+\frac1n\;\Rightarrow$
+
+$\left(1+\frac{1}{n+1}\right)^n\leq\left(1+\frac1x\right)^n < \left(1+\frac1x\right)^x < \left(1+\frac1x\right)^{n+1}\leq\left(1+\frac1n\right)^{n+1}$.
+
+Таким образом, получили неравенство
+
+$\left(1+\frac{1}{n+1}\right)^n < \left(1+\frac1x\right)^x < \left(1+\frac1n\right)^{n+1}$.
+
+Перейдем в этом неравенстве к пределу при $n\to\infty$.
+
+$ \lim\limits_{n \to \infty } \left( {1 + \frac{1}{n+1}} \right)^n =\lim\limits_{n \to \infty } \left( {1 + \frac{1}{n+1}} \right)^{\left(n+1\right)\cdot n \cdot\frac{1}{n+1}}=\lim\limits_{n \to \infty}e^{\frac{n}{n+1}}=e $,
+
+$ \lim\limits_{n \to \infty } \left( {1 + \frac{1}{n}} \right)^{n+1} =\lim\limits_{n \to \infty } \left( {1+\frac{1}{n}} \right)^{n\cdot\left({n+1}\right)\cdot\frac{1}{n}}=\lim\limits_{n \to \infty}e^{\frac{n+1}{n}}=e $.
+
+По теореме о двух милиционерах для пределов функций, получаем, что существует предел функции $\lim\limits_{x\to+\infty}\left(1+\frac1x\right)^x$ и он равен $e$.
+
+Далее рассмотрим случай $x < -1$. Вычислим предел
+
+$ \lim\limits_{x\to-\infty}\left(1+\frac1x\right)^x=\left|{{x=-t\;\Rightarrow\;t=-x},\; {t\to\infty}}\right|=\lim\limits_{t\to+\infty}\left(1+\left(-\frac1t\right)\right)^{-t}=e $.
+
+Теорема доказана.
+
+### Следствия второго замечательного предела
+
+С помощью второго замечательного предела $ \lim\limits_{x \to \infty }\left( {1 + \frac{1}{x}}\right)^x = e$ установим некоторые следствия:
+
+$ \lim\limits_{x \to 0}\left( {1 + x}\right)^{\frac{1}{x}} = \left| { \begin{array}{c}{\frac{1}{x}= t,\;t \to \infty ,}\\ {x = \frac{1}{t}} \end{array}}\right| = \lim\limits_{t \to \infty }\left( {1 + \frac{1}{t}}\right)^t = e $
+
+$ \lim\limits_{x \to 0}\frac{1}{x}\ln \left( {1 + x}\right) = \lim\limits_{x \to 0}\ln \left( {1 + x}\right)^{\frac{1}{x}} = \ln e = 1$;
+
+$ \lim\limits_{x \to 0} \frac{{e^x - 1}}{x} = \left| \begin{array}{c}{e^x - 1 = t\;\; \Rightarrow \;\;e^x = t + 1\;\Rightarrow\\ \Rightarrow \;\;x = \ln \left( {1 + t} \right) \\ t \to 0 } \end{array}\right| = \lim\limits_{t \to 0} \frac{t}{{\ln \left( {1 + t} \right)}} = \lim\limits_{t \to 0} \frac{1}{{\frac{{\ln \left( {1 + t} \right)}}{t}}} = 1 $.
+
+Если $f\left( x \right)$ – бесконечно малая при $x \to x_0 $, то второй замечательный предел и его следствия можно записать следующим образом:
+
+$ \lim\limits_{x \to x_0 } \left( {1 + f\left( x \right)} \right)^{\frac{1}{{f\left( x \right)}}} = e$, $\;\; \lim\limits_{x \to x_0 } \frac{{\ln \left( {1 + f\left( x \right)} \right)}}{{f\left( x \right)}} = 1$; $ \;\;\lim\limits_{x \to x_0 } \frac{{e^{f\left( x \right)} - 1}}{{f\left( x \right)}} = 1$.
+
+### Примеры 2-го замечательного предела
+
+Если при подстановке предельного значения аргумента в степенно показательную функцию вида \(u(x)^{v(x)}\) получают неопределенность вида \(\left[ {{1^\infty }} \right]\), то для нахождения предела такой функции можно применить второй замечательный предел.
+
+Пример 4. Вычислим предел $\lim\limits_{x\to\infty}\left(\frac{x+1}{x-2}\right)^x$.
+
+Р е ш е н и е. Так как основание степени $\frac{x+1}{x-2}\to1$ при $x\to\infty$, а показатель степени \(x\to\infty\), то имеет место неопределенность $\left[1^{\infty}\right]$ и возможно применение второго замечательного предела. Для этого в основании выделим целую часть равную 1:
+
+$\frac{x+1}{x-2}=\frac{(x-2)+2+1}{x-2}=\frac{(x-2)+3}{x-2}=1+\frac{3}{x-2}$.
+
+Тогда предел примет вид:
+
+$ \lim\limits_{x \to \infty } {\left( {1 + \frac{3}{{x - 2}}} \right)^x} =$
+
+Далее преобразуем показатель, так чтобы применить второй замечательный предел (создадим в показателе обратную бесконечно малой дроби \(\frac{3}{x - 2}\) из основания):
+
+$ =\lim\limits_{x \to \infty } {\left( {1 + \frac{3}{{x - 2}}} \right)^{x\cdot \frac{x-2}3\cdot\frac3{x-2}} }=$
+
+Так как $ \lim\limits_{x \to \infty } {\left( {1 + \frac{3}{{x - 2}}} \right)^{\frac{x-2}3}}=e$, то предел принимает вид:
+
+$ =\lim\limits_{x \to \infty } {e^{x\cdot \frac3{x-2}} }=$
+
+Перейдем к пределу в показателе
+
+$ = {e^{\lim\limits_{x \to \infty }\frac{3x}{x-2}} }=e^3$
+
+Пример 5. Вычислим предел $\lim\limits_{x\to 0}\left(1-2x\right)^{\frac3{x^3}}$.
+
+Р е ш е н и е. Убеждаемся, что при подстановке \(x=0\) в выражение под знаком предела получим неопределенность \(\left[1^\infty\right]\), что дает основание для применения второго замечательного предела. Преобразуем показатель (выделим в показателе множитель, обратный бесконечно малой \(-2x\)):
+
+$\lim\limits_{x\to 0}\left(1-2x\right)^{\frac3{x^3}}=\left[1^\infty\right]=\lim\limits_{x\to 0}\left(1-2x\right)^{\frac3{x^3}\cdot\frac{1}{-2x}\cdot (-2x)}=$
+
+Так как \(\lim\limits_{x\to 0}\left(1-2x\right)^{\frac{1}{-2x}}=e\), то предел принимает вид:
+
+\(=\lim\limits_{x\to 0}e^{\frac3{x^3}\cdot (-2x)}=e^{\lim\limits_{x\to 0}\frac{-6x}{x^3}}=\left[e^{-\infty}\right]=0\).
+
+### Эквивалентные функции
+
+Бесконечно малые (бесконечно большие) функции $f\left( x \right)$ и $g\left( x \right)$ при $x \to {x_0}$ называются эквивалентными, если
+
+$ \lim\limits_{x \to {x_0}} \frac{{f\left( x \right)}}{{g\left( x \right)}} = 1$.
+
+Обозначается $ f\left( x \right)\sim g\left( x \right) $.
+
+Для $\alpha\left( x \right) \to 0$ при $x \to x_0 $ имеем:
+
+$ \lim\limits_{x \to x_0 } \frac{{\sin \alpha\left( x \right)}}{{\alpha\left( x \right)}} = 1$, $ \lim\limits_{x \to x_0 } \frac{{\operatorname{tg} \alpha\left( x \right)}}{{\alpha\left( x \right)}} = 1$, $ \lim\limits_{x \to x_0 } \frac{{\arcsin \alpha\left( x \right)}}{{\alpha\left( x \right)}} = 1$, $ \lim\limits_{x \to x_0 } \frac{{\operatorname{arctg} \alpha\left( x \right)}}{{\alpha\left( x \right)}} = 1$, $ \lim\limits_{x \to x_0 } \frac{{1 - \cos \alpha\left( x \right)}}{{\frac{{f^2 \left( x \right)}}{2}}} = 1$
+
+$ \lim\limits_{x \to x_0 } \left( {1 + \alpha\left( x \right)} \right)^{\frac{1}{{\alpha\left( x \right)}}} = e$, $ \lim\limits_{x \to x_0 } \frac{{\ln \left( {1 + \alpha\left( x \right)} \right)}}{{\alpha\left( x \right)}} = 1$, $ \lim\limits_{x \to x_0 } \frac{{e^{\alpha\left( x \right)} - 1}}{{\alpha\left( x \right)}} = 1$
+
+следовательно можем записать следующие эквивалентные соотношения (их надо запомнить!)
+
+при $x\to 0$
+
+если $\alpha(x)$ есть бесконечно малая при $x\to x_0$
+
+${\sin x \sim x}$
+
+${\operatorname{tg} x \sim x}$
+
+${\arcsin x \sim x}$
+
+${\operatorname{arctg} x \sim x}$
+
+${1-\cos x \sim \frac{{x^2 }}{2}}$
+
+${e^x - 1 \sim x}$
+
+${a^x - 1 \sim x\ln a}$
+
+${\ln \left( {1 + x} \right) \sim x}$
+
+${\left( {1 + x} \right)^p -1 \sim px}$
+
+${\sin \alpha(x) \sim \alpha(x)}$
+
+${\operatorname{tg} \alpha(x) \sim \alpha(x)}$
+
+${\arcsin \alpha(x) \sim \alpha(x)}$
+
+${\operatorname{arctg} \alpha(x) \sim \alpha(x)}$
+
+${1-\cos \alpha(x) \sim \frac{{\alpha(x)^2 }}{2}}$
+
+${e^\alpha(x) - 1 \sim \alpha(x)}$
+
+${a^\alpha(x) - 1 \sim \alpha(x)\ln a}$
+
+${\ln \left( {1 + \alpha(x)} \right) \sim \alpha(x)}$
+
+${\left( {1 + \alpha(x)} \right)^p-1\sim p\alpha(x)}$
+
+$ {a_0}{x^n} + {a_1}{x^{n - 1}} + \ldots + {a_{n - 1}}x + {a_n} {\;\;\; \sim\\{\small x \to \infty }} {a_0}{x^n} $
+
+Теорема (критерий эквивалентности). $f\left( x \right) \sim g\left( x \right)\;\; \Leftrightarrow \;\;f\left( x \right) = g\left( x \right) + o\left( {g\left( x \right)} \right)$
+
+Доказательство. $ \Rightarrow $ (необходимость). Пусть $f\left( x \right) \sim g\left( x \right)$, т.е. по определению $ \lim\limits_{x \to x_0 } \frac{{f\left( x \right)}}{{g\left( x \right)}} = 1$, тогда $\frac{{f\left( x \right)}}{{g\left( x \right)}} = 1 + \alpha \left( x \right)$, где $\alpha \left( x \right) \to 0$ при $x \to x_0 $ и
+
+$f\left( x \right) = g\left( x \right)\left( {1 + \alpha \left( x \right)} \right) = g\left( x \right) + g\left( x \right)\alpha \left( x \right) = g\left( x \right) + o\left( {g\left( x \right)} \right)$.
+
+$ \Leftarrow $ (достаточность). Пусть $f\left( x \right) = g\left( x \right) + o\left( {g\left( x \right)} \right)$, тогда $ \lim\limits_{x \to x_0 } \frac{{f\left( x \right)}}{{g\left( x \right)}} = \lim\limits_{x \to x_0 } \frac{{g\left( x \right) + o\left( {g\left( x \right)} \right)}}{{g\left( x \right)}} = 1$, т.е. $f\left( x \right) \sim g\left( x \right)$.
+
+Теорема доказана.
+
+Теорема. Если $\alpha \left( x \right) \sim \alpha _1 \left( x \right),\;\;\beta \left( x \right) \sim \beta _1 \left( x \right)$ при $x \to x_0 $ и существует предел $ \lim\limits_{x \to x_0 } \frac{{\alpha _1 \left( x \right)}}{{\beta _1 \left( x \right)}} = A$, тогда существует и предел $ \lim\limits_{x \to x_0 } \frac{{\alpha \left( x \right)}}{{\beta \left( x \right)}} = \lim\limits_{x \to x_0 } \frac{{\alpha _1 \left( x \right)}}{{\beta _1 \left( x \right)}} = A$.
+
+Доказательство. Действительно, $ \lim\limits_{x \to x_0 } \frac{{\alpha \left( x \right)}}{{\beta \left( x \right)}} = \lim\limits_{x \to x_0 } \frac{{\alpha \left( x \right)\alpha _1 \left( x \right)\beta _1 \left( x \right)}}{{\alpha _1 \left( x \right)\beta \left( x \right)\beta _1 \left( x \right)}} = \lim\limits_{x \to x_0 } \frac{{\alpha \left( x \right)}}{{\alpha _1 \left( x \right)}} \cdot \frac{{\beta _1 \left( x \right)}}{{\beta \left( x \right)}} \cdot \frac{{\alpha _1 \left( x \right)}}{{\beta _1 \left( x \right)}} = \lim\limits_{x \to x_0 } \frac{{\alpha _1 \left( x \right)}}{{\beta _1 \left( x \right)}} = A$.
+
+Теорема доказана.
+
+### Примеры
+
+Применим теоремы об эквивалентных для нахождения пределов
+
+Пример 6. Вычислить предел $\lim\limits_{x \to 0} \frac{{\sin 3x}}{{{\rm{tg}}\, 4x}}$.
+
+Р е ш е н и е. Воспользуемся теоремой о замене функций в пределе отношения эквивалентными:
+
+$\lim\limits_{x \to 0} \frac{{\sin 3x}}{{{\rm{tg}}\, 4x}} = \left| {\begin{array}{l} {3x \to 0\;\; \Rightarrow \;\;\sin 3x \sim 3x} \\ {4x \to 0\;\; \Rightarrow \;\;{\rm{tg}}\, 4x \sim 4x} \end{array} } \right| = \lim\limits_{x \to 0} \frac{{3x}}{{4x}} = \frac{3}{4}$.
+
+Пример 7. Вычислить предел $\lim\limits_{x \to 0} \frac{{2x\sin x - {\rm{tg}} ^2 \frac{x}{2}}}{{x^2 }}$.
+
+Р е ш е н и е. В числителе воспользуемся теоремой о замене функций в пределе разности эквивалентными:
+
+$\lim\limits_{x \to 0} \frac{{2x\sin x - {\rm{tg}}^2 \frac{x}{2}}}{{x^2 }} = \left| {\begin{array}{l} {\sin x \sim x} \\ {\frac{x}{2} \to 0\;\; \Rightarrow \;\;{\rm{tg}}\, \frac{x}{2} \sim \frac{x}{2}} \end{array} } \right| = \lim\limits_{x \to 0} \frac{{2x \cdot x - \left( {\frac{x}{2}} \right)^2 }}{{x^2 }} = $
+
+$ = \lim\limits_{x \to 0} \frac{{2x^2 - \frac{{x^2 }}{4}}}{{x^2 }} = \lim\limits_{x \to 0} \frac{{\frac{7}{4}x^2 }}{{x^2 }} = \frac{7}{4}$.
+
+Пример 8. Вычислить предел $ \lim\limits_{x \to 0} \frac{{\sin 2x + 2\operatorname{arctg} 3x + 3x^2 }}{{\ln \left( {1 + 3x + \sin ^2 2x} \right)}}$.
+
+Р е ш е н и е. Воспользуемся теоремой о замене функций в пределе суммы и отношения эквивалентными:
+
+$ \lim\limits_{x \to 0} \frac{{\sin 2x + 2\operatorname{arctg} 3x + 3x^2 }}{{\ln \left( {1 + 3x + \sin ^2 2x} \right)}} = \left| {\begin{array}{c} {\sin 2x \sim 2x;\;\;\;\operatorname{arctg} 3x \sim 3x;} \\ {(3x + \sin ^2 2x)\to 0\;{\rm{при}}\, x\to 0\;\Rightarrow }\\ {\ln \left( {1 + 3x + \sin ^2 2x} \right) \sim 3x + \sin ^2 2x \sim 3x + \left( {2x} \right)^2 }\end{array} } \right| = $
+
+$=\lim\limits_{x \to 0} \frac{{2x + 2\cdot 3x + 3x^2 }}{{3x + (2x)^2 }} = \lim\limits_{x \to 0} \frac{{2x + 6x + 3x^2 }}{{3x + 4x^2 }} = \lim\limits_{x \to 0} \frac{{x\left( {8 + 3x} \right)}}{{x\left( {3 + 4x} \right)}} = \frac{8}{3}$.
+
+Пример 9. Вычислить предел $ \lim\limits_{x\to 0}\frac{{\rm arctg}\,x^2}{e^{3x^2}-1} $
+
+Р е ш е н и е. По таблице эквивалентных бесконечно малых получаем:
+
+${\rm arctg}\,x^2\;\sim\;x^2$, $e^{3x^2}-1\;\sim\;3x^2$ при $x\to 0$.
+
+Тогда $\lim\limits_{x\to 0}\frac{{\rm arctg}\,x^2}{e^{3x^2}-1}=\lim\limits_{x\to 0}\frac{x^2}{3x^2}=\frac13$.
+
+### Важное замечание
+
+Пусть $f\left( x \right) \sim g\left( x \right)$, т.е. по определению эквивалентных функций $ \lim\limits_{x \to x_0 } \frac{{f\left( x \right)}}{{g\left( x \right)}} = 1$, тогда по определению предела функции в точке $\frac{{f\left( x \right)}}{{g\left( x \right)}} = 1 + \alpha \left( x \right)$, где $\alpha \left( x \right) \to 0$ при $x \to x_0 $ и
+
+$f\left( x \right) = g\left( x \right)\left( {1 + \alpha \left( x \right)} \right) = g\left( x \right) + g\left( x \right)\alpha \left( x \right) = g\left( x \right) + o\left( {g\left( x \right)} \right)$,
+
+следовательно,
+
+$f\left( x \right) - g\left( x \right) = o\left( {g\left( x \right)} \right)$.
+
+Так как порядок бесконечно малой \(o\left( {g\left( x \right)} \right)\) в общем случае неизвестен, то переход к эквивалентным функциям в разности нужно производить осторожно.
+
+Пример 10. Вычислить предел $\lim\limits_{x \to 0} \frac{{2 - 2\cos x - \sin ^2 x}}{{x^4 }}$
+
+Р е ш е н и е. Заменим на эквивалентные слагаемые в числителе в следующем пределе:
+
+$\lim\limits_{x \to 0} \frac{{2 - 2\cos x - \sin ^2 x}}{{x^4 }} =\lim\limits_{x \to 0} \frac{{2(1-\cos x )- \sin ^2 x}}{{x^4 }} = \left| {\begin{array}{c} {1-\cos x \sim \frac{{x^2 }}{2}\;;\;\;\;\sin ^2 x \sim x^2 } \\ {\sin ^2 x \sim x^2 } \\ \end{array} } \right| = \lim\limits_{x \to 0} \frac{2 \frac{x^2}{2} - x^2}{x^2 } = \lim\limits_{x \to 0} \frac{0}{{x^4 }} = 0$.
+
+Однако, выполнив тождественные преобразования тригонометрического выражения в числителе, получим:
+
+$\lim\limits_{x \to 0} \frac{{2 - 2\cos x - \sin ^2 x}}{{x^4 }} = \lim\limits_{x \to 0} \frac{{2 - 2\cos x - \left( {1 - \cos ^2 x} \right)}}{{x^4 }} = \lim\limits_{x \to 0} \frac{{1 - 2\cos x + \cos ^2 x}}{{x^4 }} = \lim\limits_{x \to 0} \frac{{\left( {1 - \cos x} \right)^2 }}{{x^4 }} = $
+$ = \left| {1-\cos x \sim \frac{{x^2 }}{2}} \right| = \lim\limits_{x \to 0} \frac{\left(\frac{x^2 }{2}\right)^2 }{x^4} = \lim\limits_{x \to 0} \frac{{\frac{x^4}{4} }}{{x^4 }} = \frac{1}{4}$.
+
+Порядок бесконечно малой и более точные эквивалентные функции научимся определять позже с помощью формулы Тейлора.
+
+### Применение эквивалентных после замены переменной
+
+Пример 11. Вычислить предел $\lim\limits_{x\to\pi}\frac{\sin{2x}}{\sin{3x}}$
+
+Р е ш е н и е. Величины $2x$ и $3x$ не являются бесконечно малыми при $x\to\pi$, поэтому бесконечно малые при $x\to\pi$ величины $\sin{2x}$ и $\sin{3x}$ нельзя заменить на их аргументы $2x$ и $3x$ соответственно. Сделаем замену переменной. Пусть $y=x-\pi$, тогда $x=\pi+y$ и $y\to0$ при $x\to\pi$. Получим
+
+$\lim\limits_{\small x\to\pi}\frac{\sin{2x}}{\sin{3x}}=\lim\limits_{\small y\to0}\frac{\sin{(2\pi+2y)}}{\sin{(3\pi+3y)}}=\lim\limits_{\small y\to0}\frac{\sin{2y}}{(-\sin{3y})}=\lim\limits_{\small y\to0}-\frac{2y}{3y}=-\frac23$.
+
+Пример 12. Вычислить предел $ \lim\limits_{x \to 2} \frac{{\ln \left( {4x - 7} \right)}}{{{3^{x - 2}} - 1}}$.
+
+Р е ш е н и е. При подстановке предельного значения получаем неопределенность $\left[ {\frac{0}{0}} \right]$. Для ее раскрытия введем новую переменную:
+
+$t = x - 2$ , $t \to 0$ $ \Rightarrow x = t + 2$.
+
+Тогда
+
+$\ln \left( {4x - 7} \right) = \ln \left( {4\left( {t + 2} \right) - 7} \right) = \ln \left( {1 + 4t} \right) {{\;\; \sim}\\{\small t \to 0}} 4t$, ${3^{x - 2}} - 1 = {3^t} - 1 {{\;\; \sim}\\{\small t \to 0}} t\ln 3$
+
+и предел примет вид:
+
+$ \lim\limits_{x \to 2} \frac{{\ln \left( {4x - 7} \right)}}{{{3^{x - 2}} - 1}} = \lim\limits_{t \to 0} \frac{{\ln \left( {1 + 4t} \right)}}{{{3^t} - 1}} = \lim\limits_{t \to 0} \frac{{4t}}{{t\ln 3}} = \frac{4}{{\ln 3}}$.

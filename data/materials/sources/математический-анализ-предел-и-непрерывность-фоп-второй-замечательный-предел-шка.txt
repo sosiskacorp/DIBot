@@ -1,0 +1,297 @@
+### Теоремы о предельном переходе в неравенствах
+
+1. Пусть \( \lbrace{a_n}\rbrace _{n=1}^{\infty} \) – сходящаяся последовательность, и существует число $b$ , такое, что для всех элементов последовательности, начиная с некоторого, выполняется неравенство $a_n \leq b$ ($a_n \geq b$ ), тогда
+
+$ \lim\limits_{n \to \infty } a_n = a \leq b$ ($ \lim\limits_{n \to \infty } a_n = a \geq b$ ).
+
+Доказательство. От противного. Пусть $a_n \leq b$ , и $ \lim\limits_{n \to \infty } a_n = a > b$ . Тогда для $\varepsilon = a - b > 0\,\,\,\exists \,\,\,n_0 \left( \varepsilon \right)\,\,:\,\,\forall \,\,n > n_0 \,\,\, \Rightarrow \,\,\,\left| {a_n - a} \right| < a - b$ или
+
+$a - \left( {a - b} \right) < a_n < a + \left( {a - b} \right)$ $\Rightarrow$ $b < a_n < 2a - b$ .
+
+Из правого неравенства получается, что $a_n > b$ , противоречие с условием $a_n \leq b$ . Теорема доказана.
+
+2. Если начиная с некоторого номера, элементы сходящихся последовательностей $\left\{ {a_n } \right\}_{n = 1}^\infty $ и $\left\{ {b_n } \right\}_{n = 1}^\infty $ удовлетворяют неравенству $a_n \leq b_n $ , то
+
+$ \lim\limits_{n \to \infty } a_n \leq \lim\limits_{n \to \infty } b_n $ .
+
+Доказательство. Пусть $\exists \,\,n_0 \,\,:\,\,\forall \,\,n > n_0 \,\,\,a_n \leq b_n $ , тогда начиная с номера $n_0 $ верно неравенство
+
+$b_n - a_n \geq 0$
+
+и по предыдущей теореме
+
+$ \lim\limits_{n \to \infty } \left( {b_n - a_n } \right) \geq 0$
+
+или по теореме об арифметике пределов
+
+$ \lim\limits_{n \to \infty } b_n - \lim\limits_{n \to \infty } a_n \geq 0\,\,\, \Rightarrow \,\,\, \lim\limits_{n \to \infty } b_n \geq \lim\limits_{n \to \infty } a_n $ .
+
+Теорема доказана.
+
+3. Пусть $ \lim\limits_{n \to \infty } a_n = \lim\limits_{n \to \infty } b_n = a$ , и для всех элементов последовательностей, начиная с некоторого, выполняются неравенства $a_n \leq c_n \leq b_n$ , тогда
+
+$ \lim\limits_{n \to \infty } c_n = a$ .
+
+Доказательство. Пусть $ \lim\limits_{n \to \infty } a_n = \lim\limits_{n \to \infty } b_n = a$ , т.е.
+
+$\forall \,\,\varepsilon > 0\,\,\,\exists \,\,\,n_1 \left( \varepsilon \right)\,\,:\,\,\forall \,\,n > n_0 \,\,\, \Rightarrow \,\,\,\left| {a_n - a} \right| < \varepsilon $ и
+
+$\forall \,\,\varepsilon > 0\,\,\,\exists \,\,\,n_2 \left( \varepsilon \right)\,\,:\,\,\forall \,\,n > n_0 \,\,\, \Rightarrow \,\,\,\left| {b_n - a} \right| < \varepsilon $ ,
+
+следовательно, для всех $n > n_0 = \max \left\{ {n_1 ,n_2 } \right\}$ одновременно выполняются неравенства
+
+$\left| {a_n - a} \right| < \varepsilon $ и $\left| {b_n - a} \right| < \varepsilon $, или
+
+$a - \varepsilon < a_n < a + \varepsilon $ и $a - \varepsilon < b_n < a + \varepsilon $ .
+
+Тогда для $\varepsilon > 0$ для всех номеров $n > n_0 $ выполняются неравенства
+
+$a - \varepsilon < a_n \leq c_n \leq b_n < a + \varepsilon $,
+
+откуда следует, что $\left| {c_n - a} \right| < \varepsilon $ или что $ \lim\limits_{n \to \infty } c_n = a$ . Теорема доказана.
+
+### Теорема о сходимости монотонной последовательности
+
+Определение. Последовательность $\left\{ {a_n } \right\}_{n = 1}^\infty $ называется монотонной, если ее элементы удовлетворяют одному из следующих неравенств:
+
+$a_n < a_{n + 1}$ или $ a_n > a_{n + 1} $.
+
+В первом случае последовательность называется монотонно возрастающей, во втором – монотонно убывающей.
+
+Теорема (критерий Вейерштрасса). Всякая монотонная ограниченная последовательность сходится.
+
+Доказательство. Пусть последовательность $\left\{ {a_n } \right\}_{n = 1}^\infty $ монотонно возрастает и ограничена сверху. Тогда по теореме об ограниченных множествах существует точная верхняя грань $a = \sup a_n $ . По свойству точных верхних граней
+
+для $\forall \,\,\varepsilon > 0\,\,\,\exists \,\,n_0 \left( \varepsilon \right)\,\,:\,\,a_{n_0 } > a - \varepsilon $.
+
+Так как в силу монотонности последовательности для всех номеров $n > n_0 $ все элементы последовательности удовлетворяют неравенству $a_n > a_{n_0 } $ , то для $\forall \,\,n > n_0 $ можем записать неравенство
+
+$a_n > a - \varepsilon $ .
+
+С другой стороны, очевидно, что $a_n < a < a + \varepsilon $ . Таким образом, объединяя неравенства, получим
+
+$a - \varepsilon < a_n < a + \varepsilon $ или $\left| {a_n - a} \right| < \varepsilon $,
+
+что означает, что $ \lim\limits_{n \to \infty } a_n = a$ . Теорема доказана.
+
+### Теорема о вложенных отрезках* (познавательно, но не обязательно)
+
+Определение. Пусть
+
+$a_1 \leq a_2 \leq \ldots \leq a_n \leq a_{n + 1} \leq \ldots \leq b_{n + 1} \leq b_n \leq \ldots \leq b_2 \leq b_1 $,
+
+и $ \lim\limits_{n \to \infty } \left( {b_n - a_n } \right) = 0$,
+
+тогда последовательность отрезков $\left\{ {\left[ {a_n ,b_n } \right]} \right\}_{n = 1}^\infty $ называется системой вложенных отрезков.
+
+Теорема (Кантора о вложенных отрезках). Система вложенных отрезков имеет общую точку, притом только одну.
+
+Доказательство. Пусть $\left\{ {\left[ {a_n ,b_n } \right]} \right\}_{n = 1}^\infty $ – система вложенных отрезков. В силу определения, последовательность нижних граней отрезков $\left\{ {a_n } \right\}_{n = 1}^\infty $ не убывает и ограничена сверху любым элементом последовательности верхних граней отрезков $\left\{ {b_n } \right\}_{n = 1}^\infty $ . Аналогично, последовательность $\left\{ {b_n } \right\}_{n = 1}^\infty $ не возрастает и ограничена всяким элементом последовательности $\left\{ {a_n } \right\}_{n = 1}^\infty $ .
+
+По теореме Вейерштрасса последовательности $\left\{ {a_n } \right\}_{n = 1}^\infty $ и $\left\{ {b_n } \right\}_{n = 1}^\infty $ сходятся. Так как $ \lim\limits_{n \to \infty } \left( {b_n - a_n } \right) = 0$ , то$ \lim\limits_{n \to \infty } a_n = \lim\limits_{n \to \infty } b_n $ , обозначим $ \lim\limits_{n \to \infty } a_n = \lim\limits_{n \to \infty } b_n = c$ . По теоремам о предельном переходе в неравенствах, в силу того что $\forall \,\,n\,\,a_n \leq b_n $ , следует
+
+$ \lim\limits_{n \to \infty } a_n = c \leq b_n $ .
+
+Аналогично,
+
+$ \lim\limits_{n \to \infty } b_n = c \geq a_n $
+
+для $\forall \,\,a_n $ . Таким образом,
+
+$\forall \,\,n\,\,a_n \leq c \leq b_n $ .
+
+Покажем, что $c$ – единственная общая точка системы вложенных отрезков. От противного. Допустим, что существует еще одна общая точка $c' \neq c$ , принадлежащая всем отрезкам $\left[ {a_n ,b_n } \right]$ . Тогда для $\forall \,\,n$ должно выполняться неравенство
+
+$\left| {c' - c} \right| \leq b_n - a_n $
+
+и по теореме о предельном переходе
+
+$ \lim\limits_{n \to \infty }\left({ b_n - a_n }\right)\geq \left| {c' - c} \right| \neq 0$ .
+
+Противоречие. Теорема доказана.
+
+### Второй замечательный предел
+
+Теорема. $ \lim\limits_{n \to \infty } \left( {1 + \frac{1}{n}} \right)^n = e$.
+
+Доказательство. Прежде докажем вспомогательное утверждение.
+
+Лемма. Для любого $n > 2$ имеет место неравенство$\frac{1}{{n\;!}} < \frac{1}{{2^{n - 1} }}$.
+
+Доказательство леммы проведем по индукции. При $n = 3$ неравенство выполняется: $\frac{1}{{3\;!}} < \frac{1}{{2^{3 - 1} }}\; \Leftrightarrow \;\frac{1}{6} < \frac{1}{4}$. Предположим, что неравенство выполняется при $n = k$, то есть $\frac{1}{{k\;!}} < \frac{1}{{2^{k - 1} }}$, покажем, что оно верно и для $n = k + 1$:
+
+$\frac{1}{{\left( {k + 1} \right)\;!}} = \frac{1}{{k\;!\;\left( {k + 1} \right)}} < \frac{1}{{2^{k - 1} \left( {k + 1} \right)}} < \frac{1}{{2^{k - 1} \cdot 2}}$,
+
+последнее неравенство выполняется в силу того, что $n > 2$.
+
+Теперь вернемся к доказательству теоремы. Рассмотрим последовательность $\left\{ {x_n } \right\}$ с общим членом $x_n = \left( {1 + \frac{1}{n}} \right)^n $. По формуле бинома Ньютона
+
+$\left( {1 + x} \right)^n = 1 + nx + \frac{{n\left( {n - 1} \right)x^2 }}{{2\;!}} + \frac{{n\left( {n - 1} \right)\left( {n - 2} \right)x^3 }}{{3\;!}} + \quad \ldots \quad + \frac{{n\left( {n - 1} \right) \cdot \ldots \cdot \left( {n - k + 1} \right)x^k }}{{k\;!}} + \; \ldots$
+
+преобразуем общий член последовательности:
+
+$x_n = \left( {1 + \frac{1}{n}} \right)^n = 1 + n\frac1n + \frac{{n\left( {n - 1} \right)\frac{1}{{n^2 }}}}{{2\;!}} + \frac{{n\left( {n - 1} \right)\left( {n - 2} \right)\frac{1}{{n^3 }}}}{{3\;!}} + \quad \ldots\quad + \frac{{n\left( {n - 1} \right) \cdot \ldots \cdot \left( {n - n + 1} \right)\frac{1}{{n^n }}}}{{n\;!}} + \; \ldots =$
+
+$= 2 + \frac{1}{{2\;!}}\left( {1 - \frac{1}{n}} \right) + \frac{1}{{3\;!}}\left( {1 - \frac{1}{n}} \right)\left( {1 - \frac{2}{n}} \right) + \ldots + \frac{1}{{n\;!}}\left( {1 - \frac{1}{n}} \right)\left( {1 - \frac{2}{n}} \right) \ldots \left( {1 - \frac{{n - 1}}{n}} \right) > 2$,
+
+так как все слагаемые в правой части неравенства положительны.
+
+Для $x_{n + 1} $ будет верно выражение
+
+$x_{n + 1} = 2 + \frac{1}{{2\;!}}\left( {1 - \frac{1}{{n + 1}}} \right) + \frac{1}{{3\;!}}\left( {1 - \frac{1}{{n + 1}}} \right)\left( {1 - \frac{2}{{n + 1}}} \right) + \ldots + \frac{1}{{\left( {n + 1} \right)\;!}}\left( {1 - \frac{1}{{n + 1}}} \right)\left( {1 - \frac{2}{{n + 1}}} \right) \ldots \left( {1 - \frac{n}{{n + 1}}} \right)$.
+
+Так как $\left( {1 - \frac{k}{n}} \right) < \left( {1 - \frac{k}{{n + 1}}} \right)$ $\forall \;n > k$, то
+
+$x_n < 2 + \frac{1}{{2\;!}}\left( {1 - \frac{1}{{n + 1}}} \right) + \frac{1}{{3\;!}}\left( {1 - \frac{1}{{n + 1}}} \right)\left( {1 - \frac{2}{{n + 1}}} \right) + \ldots + \frac{1}{{n\;!}}\left( {1 - \frac{1}{{n + 1}}} \right)\left( {1 - \frac{2}{{n + 1}}} \right) \ldots \left( {1 - \frac{{n - 1}}{{n + 1}}} \right) = $
+
+$ = x_{n + 1} - \frac{1}{{\left( {n + 1} \right)\;!}}\left( {1 - \frac{1}{{n + 1}}} \right)\left( {1 - \frac{2}{{n + 1}}} \right) \ldots \left( {1 - \frac{n}{{n + 1}}} \right) < x_{n+1} $
+
+так как $\frac{1}{{\left( {n + 1} \right)\;!}}\left( {1 - \frac{1}{{n + 1}}} \right)\left( {1 - \frac{2}{{n + 1}}} \right) \ldots \left( {1 - \frac{n}{{n + 1}}} \right) > 0$.
+
+Следовательно, $x_n < x_{n + 1} $ и $\left\{ {x_n } \right\}_{n = 1}^\infty $ – монотонно возрастающая последовательность.
+
+В силу того, что $\left( {1 - \frac{k}{{n + 1}}} \right) < 1$ для $k \leq n$, и утверждения леммы получим
+
+$x_n < 2 + \frac{1}{{2\;!}} + \frac{1}{{3\;!}} + \ldots + \frac{1}{{n\;!}} < 2 + \frac{1}{2} + \frac{1}{{2^2 }} + \ldots + \frac{1}{{2^{n - 1} }} = 1 + 1 + \frac{1}{2} + \frac{1}{{2^2 }} + \ldots + \frac{1}{{2^{n - 1} }}$.
+
+В правой части последнего неравенства получили сумму $n$ членов бесконечно убывающей геометрической прогрессии с первым членом $b_1 = 1$ и знаменателем $q = \frac{1}{2}$. Ее сумма равна
+
+$\frac{{b_1 - q^n }}{{b_1 - q}} = \frac{{1 - \left( {\frac{1}{2}} \right)^n }}{{1 - \frac{1}{2}}} = \frac{{\left( {2^n - 1} \right)2}}{{\left( {2 - 1} \right)2^n }} = \frac{{2^n }}{{2^{n - 1} }} - \frac{1}{{2^{n - 1} }} = 2 - \frac{1}{{2^{n - 1} }} < 2$.
+
+Таким образом, $x_n < 1 + 2 - \frac{1}{{2^{n - 1} }} < 3$, следовательно, монотонно возрастающая последовательность $\left\{ {x_n } \right\}$ ограничена сверху, и по теореме о сходимости монотонной ограниченной последовательности существует $ \lim\limits_{n \to \infty } x_n $, его обозначают
+
+$ \lim\limits_{n \to \infty } \left( {1 + \frac{1}{n}} \right)^n = e$,
+
+где $2 < e < 3$. Теорема доказана.
+
+Второй замечательный предел будем применять в следующей форме:
+
+$ \lim\limits_{n \to \infty } \left( {1 + \frac{1}{a_n}} \right)^{a_n} = e$.
+
+где $a_n\to\infty$ при $n\to\infty$.
+
+Пример 1. $ \lim\limits_{n \to \infty } \left({1-\frac{1}{2n}} \right)^n$
+
+Р е ш е н и е. При подстановке бесконечно большого значения $n$ в выражение в пределе, получается неопределенность $\left[1^{\infty}\right]$, для раскрытия которой воспользуемся вторым замечательным пределом. Перепишем предел в следущем виде
+
+$ \lim\limits_{n \to \infty } \left( {1+\frac{1}{(-2n)}} \right)^n$.
+
+Преобразуем выражение в показателе:
+
+$ \lim\limits_{n \to \infty }{ \left( {1+\frac{1}{(-2n)}} \right)^{-2n\cdot\frac{1}{(-2n)}\cdot n}}\;=\lim\limits_{n \to \infty }\left( \left( {1+\frac{1}{(-2n)}} \right)^{-2n}\right)^{\frac{1}{(-2n)}\cdot n}$
+
+Выражение в скобках $\left( \left( {1+\frac{1}{(-2n)}} \right)^{-2n}\right)\to e$, следовательно,
+
+$\lim\limits_{n \to \infty }\left( \left( {1+\frac{1}{(-2n)}} \right)^{-2n}\right)^{\frac{1}{(-2n)}\cdot n}\;=\lim\limits_{n \to \infty }e^{-\frac{n}{2n}}=e^{-\frac12}$.
+
+Аналогично поступают и при вычислении пределов с большими степенями в рациональных дробях
+
+Пример 2. Вычислить предел: \(\mathop {\lim }\limits_{n \to \infty } {\left( {\frac{{{n^2} + 3n + 4}}{{{n^2} - 5n + 1}}} \right)^{2n}}\) .
+
+Р е ш е н и е. Убедившись, что \(\mathop {\lim }\limits_{n \to \infty } \frac{{{n^2} + 3n + 4}}{{{n^2} - 5n + 1}} = \mathop {\lim }\limits_{n \to \infty } \frac{{{n^2}}}{{{n^2}}} = 1\) , делаем вывод, что при \(n \to \infty \) исследуемая функция представляет собой бесконечно большую степень числа, бесконечно близкого к \(1\) , т.е. неопределенность вида \(\left[ {{1^\infty }} \right]\).
+
+Выделим целую часть в основании степени
+
+\(\frac{{{n^2} + 3n + 4}}{{{n^2} - 5n + 1}} = \frac{{\left( {{n^2} - 5n + 1} \right) + \left( {8n + 3} \right)}}{{{n^2} - 5n + 1}} = 1 + \frac{{8n + 3}}{{{n^2} - 5n + 1}}\) ,
+
+и вычислим предел с использованием второго замечательного предела:
+
+\(\mathop {\lim }\limits_{n \to \infty } {\left( {\frac{{{n^2} + 3n + 4}}{{{n^2} - 5n + 1}}} \right)^{2n}}\)\( = \mathop {\lim }\limits_{n \to \infty } {\left( {1 + \frac{{8n + 3}}{{{n^2} - 5n + 1}}} \right)^{2n}} \)\( = \mathop {\lim }\limits_{n \to\infty } {\left[ {{{\left( {1 + \frac{{8n + 3}}{{{n^2} - 5n + 1}}} \right)}^{\frac{{{n^2} - 5n + 1}}{{8n + 3}}}}} \right]^{\frac{{2n\left( {8n + 3} \right)}}{{{n^2} - 5n + 1}}}} = \)
+
+\( = \mathop {\lim }\limits_{n \to \infty } {e^{\frac{{2n\left( {8n + 3} \right)}}{{{n^2} - 5n + 1}}}} = {e^{\mathop {\lim }\limits_{n \to \infty } \frac{{2n\left( {8n + 3} \right)}}{{{n^2} - 5n + 1}}}} = {e^{16}}\) ,
+
+так как \(\mathop {\lim }\limits_{n \to \infty } \frac{{2n\left( {8n + 3} \right)}}{{{n^2} - 5n + 1}} = \mathop {\lim }\limits_{n \to \infty } \frac{{16{n^2}}}{{{n^2}}} = 16\) .
+
+### Шкала роста
+
+1. Докажем, что $\lim\limits_{n \to \infty }\sqrt[n]{a}= 1$ для $\forall \;a \neq 0$.
+
+Для $a = 1$, утверждение очевидно. Пусть $a > 1$, тогда $\sqrt[n]{a}> 1$ и $\sqrt[n]{a}- 1 > 0$.
+
+Воспользуемся формулой бинома Ньютона для $x > 0$:
+
+$\left( {1 + x}\right)^n = 1 + nx + \frac{{n\left( {n - 1}\right)}}{{2!}}x^2 + \frac{{n\left( {n - 1}\right)\left( {n - 2}\right)}}{{3!}}x^3 + \ldots + \frac{{n\left( {n - 1}\right)\left( {n - 2}\right) \cdots \left( {n - k + 1}\right)}}{{k!}}x^k + \ldots $
+
+Представим число $a$ следующим образом:
+
+$a = \left( {1 + \left( {\sqrt[n]{a}- 1}\right)}\right)^n = 1 + n\left( {\sqrt[n]{a}- 1}\right) + \frac{{n\left( {n - 1}\right)}}{2}\left( {\sqrt[n]{a}- 1}\right)^2 + \ldots > 1 + n\left( {\sqrt[n]{a}- 1}\right)$.
+
+Неравенство верно, так как $\sqrt[n]{a}- 1 > 0$ и все слагаемые в сумме положительны.
+
+Из этого неравенства получим оценку для $\left( {\sqrt[n]{a}- 1}\right)$:
+
+$a > 1 + n\left( {\sqrt[n]{a}- 1}\right)\;\; \Rightarrow \;\;\sqrt[n]{a}- 1 < \frac{{a - 1}}{n}$.
+
+Чтобы показать, что $\lim\limits_{n \to \infty }\sqrt[n]{a}= 1$, нужно для $\forall \;\varepsilon > 0$ указать номер элемента последовательности, начиная с которого, все ее элементы будут удовлетворять неравенству
+
+$\left| {\sqrt[n]{a}- 1}\right| < \varepsilon $.
+
+Используя полученную оценку, можем записать:
+
+$\sqrt[n]{a}- 1 < \frac{{a - 1}}{n}< \varepsilon \;\; \Rightarrow \;\;n > \frac{{a - 1}}{\varepsilon }$,
+
+следовательно, начиная с номера $n_0 = \left[ {\frac{{a - 1}}{\varepsilon }}\right]$, все элементы последовательности $\sqrt[n]{a}$ будут сколь угодно близки к значению 1.
+
+Теперь пусть $0 < a < 1$, тогда $\frac{1}{a}> 1$ и $\lim\limits_{n \to \infty }\sqrt[n]{\frac{1}{a}} = 1$ по уже доказанному, тогда
+
+$\lim\limits_{n \to \infty }\sqrt[n]{a}= \lim\limits_{n \to \infty }\frac{1}{{\sqrt[n]{\frac{1}{a}}}}= 1$.
+
+2. Докажем, что $\lim\limits_{n \to \infty }\sqrt[n]{n} = 1$.
+
+Представим $n = \left( {1 + \left( {\sqrt[n]{n} - 1}\right)}\right)^n $.
+
+Так как $\sqrt[n]{n} - 1 > 0$, то по формуле бинома Ньютона получим
+
+$n = \left( {1 + \left( {\sqrt[n]{n} - 1}\right)}\right)^n = 1 + n\left( {\sqrt[n]{n}- 1}\right) + \frac{{n\left( {n - 1}\right)}}{{2!}}\left( {\sqrt[n]{n}- 1}\right)^2 + \ldots > \frac{{n\left( {n - 1}\right)}}{{2!}}\left( {\sqrt[n]{n}- 1}\right)^2 $.
+
+Преобразуем полученное неравенство:
+
+$n > \frac{{n\left( {n - 1}\right)}}{{2!}}\left( {\sqrt[n]{n}- 1}\right)^2 \;\; \Rightarrow \;\;\left( {\sqrt[n]{n}- 1}\right)^2 < \frac{{2n}}{{n\left( {n - 1}\right)}}\;\; \Rightarrow \;\;\sqrt[n]{n}- 1 < \sqrt {\frac{2}{{n - 1}}}$.
+
+Таким образом, в силу полученной оценки, для $\forall \;\varepsilon > 0$
+
+$\sqrt[n]{n}- 1 < \sqrt {\frac{2}{{n - 1}}} < \varepsilon \;\; \Rightarrow \;\;\frac{2}{{n - 1}}< \varepsilon ^2 \;\; \Rightarrow \;\;n - 1 > \frac{2}{{\varepsilon ^2 }}\;\; \Rightarrow \;\;n > \frac{2}{{\varepsilon ^2 }}+ 1$.
+
+Значит, для всех номеров больше $n_0 = \left[ {\frac{2}{{\varepsilon ^2 }}+ 1}\right]$элемент $\sqrt[n]{n}- 1$ бесконечно мал, что означает $\lim\limits_{n \to \infty }\sqrt[n]{n}= 1$.
+
+3. Покажем, что $\lim\limits_{n \to \infty }\frac{{a^n }}{{n!}}= 0$.
+
+Применим теорему об арифметике:
+
+$\left. {\left. {\lim\limits_{n \to \infty }\frac{{a^n }}{{n!}}= \lim\limits_{n \to \infty }\underbrace {\frac{a}{1}\cdot\frac{a}{2}\cdot \ldots \frac{a}{n}}_n = \;}\right|\;\frac{a}{n}\to 0\;}\right|\; = 0$.
+
+4. Покажем, что $\lim\limits_{n \to \infty }\frac{{n^b }}{{a^n }}= 0\;\;\forall \;\;a > 1$, $\forall \;b$.
+
+Пусть $b$ – целое и $m \geq b$, тогда
+
+$\frac{{n^b }}{{a^n }}\leq \frac{{n^m }}{{a^n }}= \left( {\frac{n}{{\sqrt[m]{a^n }}}}\right)^m = \left( {\frac{n}{{b^n }}}\right)^m $,
+
+где $b = \sqrt[m]{a} > 1$.
+
+$\frac{n}{{b^n }}= \frac{n}{{\left( {1 + \left( {b - 1}\right)}\right)^n }}= \frac{n}{{1 + n\left( {b - 1}\right) + \frac{{n\left( {n - 1}\right)}}{{2!}}b^2 + \ldots }}< \frac{n}{{\frac{{n\left( {n - 1}\right)}}{{2!}}b^2 }}= \frac{2}{{b^2 \left( {n - 1}\right)}}\to 0$,
+
+cледовательно, и $\left( {\frac{n}{{b^n }}}\right)^m \to 0$ при $n \to \infty $, откуда $\lim\limits_{n \to \infty }\frac{{n^b }}{{a^n }}= 0$.
+
+5. $\lim\limits_{n \to \infty }\frac{{\ln n}}{n}= 0$
+
+Заменим $\ln n$ на $m$, тогда $m \to \infty $ при $n \to \infty $ и из равенства $\ln n = m$ выразим $n = e^m $.
+
+$\lim\limits_{n \to \infty }\frac{{\ln n}}{n}= \lim\limits_{m \to \infty }\frac{m}{{e^m }}= 0$
+
+по утверждению 4 при $b = 1$.
+
+Аналогично можно установить, что
+
+$\lim\limits_{n \to \infty }\frac{{\ln ^a n}}{{n^b }}= 0,\;\;b > 0$.
+
+Объединяя вычисленные пределы, запишем цепочку неравенств верных при $n \to \infty $:
+
+$\underbrace {\ln ^a n}_{\forall a} < \underbrace {n^b }_{\forall b>0} < \underbrace {a^n }_{\forall a > 1} < n! < n^n $,
+
+которую называют шкалой роста.
+
+Для элементов шкалы можно записать
+
+$\lim\limits_{n \to \infty }\frac{m}{b}= 0$,
+
+где $m$ – меньший элемент, $b$ – больший элемент.

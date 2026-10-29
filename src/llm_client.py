@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -98,10 +99,21 @@ class LLMClient:
         self.config = config
 
         ollama_cfg = config.get("ollama") or {}
-        self.base_url = (base_url or ollama_cfg.get("base_url") or "http://localhost:11434").rstrip("/")
+        env_ollama = os.environ.get("OLLAMA_BASE_URL", "").strip()
+        self.base_url = (base_url or env_ollama or ollama_cfg.get("base_url") or "http://localhost:11434").rstrip("/")
         self.timeout = float(timeout or ollama_cfg.get("request_timeout") or 600)
         self.keep_alive = ollama_cfg.get("keep_alive", "5m")
         self._cache_ttl = float(ollama_cfg.get("model_cache_ttl") or 30)
+
+        self.cloud_api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        self.cloud_base_url = (
+            os.environ.get("OPENAI_BASE_URL", "").strip()
+            or "https://api.groq.com/openai/v1"
+        ).rstrip("/")
+        self.cloud_model = (
+            os.environ.get("OPENAI_MODEL", "").strip()
+            or "llama-3.3-70b-versatile"
+        )
 
         # Старое имя ключа оставлено для модулей, которые ещё не переписаны.
         self.default_model = config.get("default_model")
@@ -224,12 +236,30 @@ class LLMClient:
                 last_error = exc
                 log.warning("%s", exc)
                 continue
-            except OllamaUnavailable:
+            except OllamaUnavailable as exc:
+                last_error = exc
+                if self.cloud_api_key:
+                    return self._post_cloud_chat(
+                        messages=prepared,
+                        options=merged_options,
+                        json_format=json_format,
+                        timeout=timeout or 120,
+                        task=route.task,
+                    )
                 raise
             except requests.RequestException as exc:
                 last_error = exc
                 log.warning("Сбой запроса к %s: %s", candidate, exc)
                 continue
+
+        if self.cloud_api_key:
+            return self._post_cloud_chat(
+                messages=prepared,
+                options=merged_options,
+                json_format=json_format,
+                timeout=timeout or 120,
+                task=route.task,
+            )
 
         raise ModelUnavailable(
             f"Ни одна модель из цепочки {chain} не ответила. Последняя ошибка: {last_error}"
@@ -359,6 +389,70 @@ class LLMClient:
             output_tokens=int(data.get("eval_count") or 0),
             seconds=round(elapsed, 3),
             done_reason=data.get("done_reason") or "",
+        )
+
+    def _post_cloud_chat(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        options: Mapping[str, Any],
+        json_format: bool | str | None,
+        timeout: float,
+        task: str,
+    ) -> ChatResult:
+        """Облачный OpenAI-совместимый резерв (Groq / OpenRouter / Gemini) для деплоя в облаке."""
+        oai_messages: list[dict[str, Any]] = []
+        for msg in messages:
+            role = msg.get("role") or "user"
+            content = msg.get("content") or ""
+            imgs = msg.get("images") or []
+            if imgs:
+                parts: list[dict[str, Any]] = [{"type": "text", "text": content}]
+                for b64 in imgs:
+                    parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                        }
+                    )
+                oai_messages.append({"role": role, "content": parts})
+            else:
+                oai_messages.append({"role": role, "content": content})
+
+        payload: dict[str, Any] = {
+            "model": self.cloud_model,
+            "messages": oai_messages,
+            "temperature": float(options.get("temperature", 0.3)),
+        }
+        if json_format:
+            payload["response_format"] = {"type": "json_object"}
+
+        started = time.perf_counter()
+        resp = self._session.post(
+            f"{self.cloud_base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.cloud_api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=timeout,
+        )
+        if not resp.ok:
+            raise LLMError(f"Ошибка облачного API ({resp.status_code}): {resp.text[:300]}")
+        data = resp.json()
+        elapsed = time.perf_counter() - started
+        choice = (data.get("choices") or [{}])[0]
+        msg_obj = choice.get("message") or {}
+        usage = data.get("usage") or {}
+        return ChatResult(
+            text=(msg_obj.get("content") or "").strip(),
+            model=f"cloud:{data.get('model') or self.cloud_model}",
+            task=task,
+            thinking=(msg_obj.get("reasoning_content") or "").strip(),
+            prompt_tokens=int(usage.get("prompt_tokens") or 0),
+            output_tokens=int(usage.get("completion_tokens") or 0),
+            seconds=round(elapsed, 3),
+            done_reason=choice.get("finish_reason") or "stop",
         )
 
     # ------------------------------------------------------------- проверка

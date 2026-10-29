@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -23,6 +24,14 @@ from typing import Any
 
 import requests
 import streamlit as st
+
+# Поддержка st.secrets для бесплатного деплоя в Streamlit Community Cloud
+try:
+    for _sec_key in ("OLLAMA_BASE_URL", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "DISPACE_AUTH_TOKEN"):
+        if _sec_key in st.secrets and not os.environ.get(_sec_key):
+            os.environ[_sec_key] = str(st.secrets[_sec_key])
+except Exception:
+    pass
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -190,9 +199,30 @@ with st.sidebar:
 
     if status["ok"]:
         st.success(f"Ollama: {len(status['models'])} моделей готово")
+    elif os.environ.get("OPENAI_API_KEY"):
+        st.success(f"Облачный ИИ: {os.environ.get('OPENAI_MODEL', 'llama-3.3-70b-versatile')}")
     else:
-        st.error("Ollama не отвечает")
-        st.caption(status.get("error", ""))
+        st.warning("Локальный Ollama не отвечает (облачный режим)")
+        with st.expander("☁️ Подключить бесплатный облачный API / туннель", expanded=True):
+            cloud_key = st.text_input(
+                "API-ключ (Groq / OpenRouter / Gemini)",
+                type="password",
+                placeholder="gsk_... или sk-or-...",
+            )
+            cloud_url = st.text_input(
+                "Base URL",
+                value=os.environ.get("OPENAI_BASE_URL", "https://api.groq.com/openai/v1"),
+            )
+            cloud_mod = st.text_input(
+                "Модель",
+                value=os.environ.get("OPENAI_MODEL", "llama-3.3-70b-versatile"),
+            )
+            if st.button("Применить ключ", width="stretch") and cloud_key.strip():
+                os.environ["OPENAI_API_KEY"] = cloud_key.strip()
+                os.environ["OPENAI_BASE_URL"] = cloud_url.strip()
+                os.environ["OPENAI_MODEL"] = cloud_mod.strip()
+                get_tutor.clear()
+                st.rerun()
 
     if status["loaded"]:
         for item in status["loaded"]:

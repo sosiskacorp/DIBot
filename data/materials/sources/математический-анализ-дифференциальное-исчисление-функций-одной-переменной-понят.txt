@@ -1,0 +1,413 @@
+### Определение производной и дифференцируемой функции
+
+Пусть функция \(y=f(x)\) определена в некоторой окрестности точки \({{x}_{0}}\) и точка \({{x}_{0}}+\Delta x\) принадлежит указанной окрестности. Тогда приращению аргумента \(\Delta x\) соответствует приращение функции \(\Delta f\left(x_0\right)=f\left(x_0+\Delta x\right)-f\left(x_0\right)\).
+
+Определение. Производной функции \(f(x)\) в точке \({{x}_{0}}\) называется предел (если он существует и конечен) отношения приращения функции к приращению аргумента при условии, что приращение аргумента стремится к нулю.
+
+По определению $$f'({{x}_{0}})=\lim\limits_{\Delta x\to 0}\frac{\Delta f(x)}{\Delta x}=\lim\limits_{\Delta x\to 0}\frac{f\left(x_0+\Delta x\right)-f\left(x_0\right)}{\Delta x}.\tag{1}$$
+
+Если для некоторого значения \({{x}_{0}}\) предел \(\lim\limits_{\Delta x\to 0}\frac{\Delta f\left(x_0\right)}{\Delta x}=+\infty \) или \(\lim\limits_{\Delta x\to 0}\frac{\Delta f\left(x_0\right)}{\Delta x}=-\infty \), то говорят, что функция имеет в точке \({{x}_{0}}\) бесконечную производную.
+
+Исходя из определения предела, из (1) можем записать:
+
+$\frac{\Delta f\left(x_0\right)}{\Delta x}=f^{\prime}(x_0)+\alpha\left(\Delta x\right)$,
+
+где $\alpha\left(\Delta x\right)$ – бесконечно малая при $\Delta x\to 0$. Умножим обе части равенства на \(\Delta x\), получим:
+
+$\Delta f\left(x_0\right)=f^{\prime}(x_0)\Delta x+\alpha\left(\Delta x\right)\Delta x$,
+
+а так как $\alpha\left(\Delta x\right)\Delta x$ – бесконечно малая более высокого порядка, чем \(\Delta x\), то есть можем записать $\alpha\left(\Delta x\right)\Delta x=o\left(\Delta x\right)$, то $$\Delta f\left(x_0\right)=f^{\prime}(x_0)\Delta x+o\left(\Delta x\right).\tag{2}$$
+
+Определение. Функция $f$ называется дифференцируемой в точке $x_0$ если существует число $A \neq 0$, такое что приращение функции можно представить в виде:
+
+$\Delta f\left( x_0 \right)=A \cdot \Delta x + \alpha \left( {\Delta x}\right)\Delta x$,
+
+где $\alpha \left( {\Delta x}\right) \to 0$ при $\Delta x \to 0$.
+
+Так как $\alpha \left( {\Delta x}\right)\Delta x=o\left( {\Delta x}\right)$, при $\Delta x \to 0$, то условие дифференцируемости можно записать в виде: $$\Delta f\left( x_0\right)=A \cdot \Delta x + o\left( {\Delta x}\right).\tag{3}$$
+
+Сравнивая (2) и (3), делаем вывод: если функция \(f\) имеет конечную производную в точке \(x_0\), то она дифференцируема в этой точке, и число \(A\) в определении дифференцируемой функции - это значение производной функции в точке \(x_0\). Этот факт сформулируем в виде теоремы:
+
+Теорема (необходимое и достаточное условие дифференцируемости). Функция дифференцируема в точке тогда и только тогда, когда она имеет конечную производную в этой точке.
+
+Теорема. Если функция $f(x)$ дифференцируема в некоторой точке, то она является в этой точке непрерывной.
+
+Действительно, если функция дифференцируема в точке, то из (3) следует, что приращение функции \(\Delta f\left( x_0\right)\) стремится к нулю при стремлении к нулю приращения аргумента \(\Delta x\), что означает, что функция непрерывна в точке \(x_0\).
+
+Важно понимать, что из условия непрерывности не следует условия дифференцируемости. Так по определению, функция непрерывна, если ее приращение стремится к нулю, но это не значит, что приращение функции имеет вид (3).
+
+### Геометрический смысл производной
+
+На кривой графика функции отметим точки $A\left(x_0, f(x_0)\right)$ и $B\left(x_0+\Delta x, f(x_0+\Delta x)\right)$, соединим эти точки отрезком прямой, получим секущую графика функции $AB$.
+
+Определение. Касательной к графику функции в точке $A$ называется предельное положение секущей $AB$ при перемещении точки $B$ к точке $A$ вдоль кривой графика при $\Delta x\to 0$.
+
+Обозначим $\varphi$ – угол наклона секущей $AB$ к оси $Ox$, $\varphi_0$ – угол наклона касательной к оси $Ox$, предельному положению секущей соответствует предельное значение $\operatorname{tg}\varphi$ при $\Delta x\to 0$:
+
+$\lim\limits_{\Delta x\to 0}\operatorname{tg}\varphi=\operatorname{tg}\varphi_0$.
+
+Так как $\operatorname{tg}\varphi_0=\frac{\Delta y}{\Delta x}$, то
+
+$\operatorname{tg}\varphi_0=\lim\limits_{\Delta x\to 0}\frac{\Delta y}{\Delta x}$.
+
+Если функция $y=f(x)$ имеет производную в точке $x_0$, то указанный предел существует и конечен.
+
+Значит,
+
+$\operatorname{tg}\varphi_0=\lim\limits_{\Delta x\to 0}\frac{\Delta y}{\Delta x}=f^{\prime}(x_0)$,
+
+значение производной функции в точке определяет значение тангенса угла наклона касательной к графику этой функции в точке с абсциссой $x_0$. В этом заключается геометрический смысл производной.
+
+Уравнение касательной определяем по угловому коэффициенту $k=\operatorname{tg}\varphi_0=f^{\prime}(x_0)$ и точке $A\left(x_0, f(x_0)\right)$ (модуль 1, тема 1.1):
+
+$y-f\left(x_0\right)=k\left(x-x_0\right)\;\;\Rightarrow\;\;y=f^{\prime}(x_0)\left(x-x_0\right)+f(x_0) $.
+
+Здесь $x$ и $y$ – координаты точки касательной, \(k={f}'({{x}_{0}})\)- угловой коэффициент касательной, $\left( {{x}_{0}},{{y}_{0}} \right)$ - координаты точки касания.
+
+Угловые коэффициенты касательной и нормали связаны условием перпендикулярности двух прямых: если \(k\) – угловой коэффициент прямой, то угловой коэффициент перпендикулярной прямой равен \(-\frac1k\). Составляя уравнение прямой, проходящей через точку $A\left(x_0, f(x_0)\right)$ с угловым коэффициентом \(k\), получим уравнение нормали к графику функции в точке \(A\):
+
+$y-f\left(x_0\right)=-\frac1k\left(x-x_0\right)\;\;\Rightarrow\;\;y=-\frac{1}{f^{\prime}(x_0)}\left(x-x_0\right)+f(x_0) $.
+
+Частные случаи
+
+•
+Если \({f}'({{x}_{0}})=0\), то касательная в точке $\left(x_0, f(x_0)\right)$ параллельна оси \(Ox\) и ее уравнение \(y=f\left(x_0\right)\). Нормаль к графику в этом случае перпендикулярна оси \(Ox\) и ее уравнение \(x={{x}_{0}}\).
+
+•
+Если функция $f(x)$ непрерывна в точке $x_0$ и \(\lim\limits_{\Delta x\to 0}\frac{\Delta f(x_0)}{\Delta x}=\infty \), то касательная к графику этой функции в точке \(x_0\) параллельна оси ординат.
+
+• Если функция $f(x)$ непрерывна в точке $x_0$, а \(\lim\limits_{\Delta x\to 0}\frac{\Delta y}{\Delta x}\) не существует, то касательную к графику функции в точке построить нельзя.
+В данном случае к графику функции можно провести две касательных с разными углами наклона, следовательно, существуют два различных значения предела \(\lim\limits_{\Delta x\to 0}\frac{\Delta f(x_0)}{\Delta x}\), а это значит что этот предел (и производная функции в точке) не существует.
+
+### Физический смысл производной
+
+Пусть \(\Delta f({{x}_{0}})\) – приращение значения функции \(f(x)\), определенной в окрестности точки \({{x}_{0}}\), соответствующее приращению аргумента \(\Delta x\). Тогда средняя скорость изменения функции
+
+\({{v}_{\text{}}}=\frac{\Delta f\left(x_0\right)}{\Delta x}\),
+
+а мгновенная скорость ее изменения
+
+\(v=\lim\limits_{\Delta x\to 0}\frac{\Delta f({{x}_{0}})}{\Delta x}={f}'({{x}_{0}})\).
+
+Таким образом, производная – математическая модель мгновенной скорости процесса, определенного функцией \(f(x)\).
+
+Например, если $s\left( t \right)$ – функция, описывающая зависимость пути от времени, то $\frac{\Delta s}{\Delta t}$ – средняя скорость, а
+
+${s}'\left( {{t}_{0}} \right)=\lim\limits_{\Delta t\to 0}\frac{\Delta s\left( {{t}_{0}} \right)}{\Delta t}=\lim\limits_{\Delta t\to 0}\frac{s\left( {{t}_{0}}+\Delta t \right)-s\left( {{t}_{0}} \right)}{\Delta t}$
+
+– мгновенная скорость движения в момент времени ${{t}_{0}}$.
+
+Если функция \(m(x)\) задает массу неоднородного тонкого стержня в зависимости от расстояния \(x\) от конца стержня, то \(\frac{\Delta m\left(x_0\right)}{\Delta x}\) - средняя плотность материала стержня на его части \(\Delta m\left(x_0\right)-m\left(x_0+\Delta x\right)-m\left(x_0\right)\), а производная от \(m(x)\) по переменной \(x\) в точке \({{x}_{0}}\) есть линейная плотность стержня:
+
+\(\rho ({{x}_{0}})={m}'({{x}_{0}})=\lim\limits_{\Delta x\to 0}\frac{m({{x}_{0}}+\Delta x)-m({{x}_{0}})}{\Delta x}\).
+
+Производительность труда — это объём продукции, произведённой работником за единицу времени (например, за час или за смену). Если обозначить объём произведённой продукции как функцию от времени $Q(t)$, то количество продукции, произведенной за время \(\Delta t\) равно \(\Delta Q\left(t_0\right)=Q\left(t_0+\Delta t\right)-Q\left(t_0\right)\), тогда производительность труда в момент времени \(t_0\) будет равна
+
+\(\lim\limits_{\Delta t\to 0}\frac{Q({{t}_{0}}+\Delta t)-Q({{t}_{0}})}{\Delta t}=Q'(t_0)\).
+
+Таким образом, производительность труда в конкретный момент времени равна производной функции объема производимой продукции.
+
+### Нахождение производной в точке
+
+Чтобы найти производную функции \(f(x)\) в точке \(x_0\) нужно выполнить следующие действия:
+
+• Найти значение функции в точке \(x_0\).
+
+• Задать приращение аргумента \(\Delta x\).
+
+• Найти приращение функции \(\Delta f=f(x_0+\Delta x)-f(x_0)\).
+
+• Составить отношение приращения функции к приращению аргумента: \( \frac{\Delta f}{\Delta x}=\frac{f(x_0+\Delta x)-f(x_0)}{\Delta x} \).
+
+• Найти предел этого отношения при \(\Delta x \to 0\): \( \lim\limits_{\Delta x\to 0} \frac{\Delta f}{\Delta x}= \lim\limits_{\Delta x\to 0}\frac{f(x_0+\Delta x)-f(x_0)}{\Delta x} \).
+
+Пример 1. Найдем по определению производную функции \(y=x^2\) в точке \(x_0=3\)
+
+Р е ш е н и е. Найдем значение функции \(y(3)=3^2=9\).
+
+Зададим приращение $\Delta x$ в точке \(x_0=3\), получим точку \(x=3+\Delta x\).
+
+Найдем приращение функции:
+
+\( \Delta f=f(3+\Delta x)-f(3)=(3+\Delta x)^2-9=9+6\Delta x+(\Delta x)^2-9=6\Delta x+(\Delta x)^2 \).
+
+Вычислим предел:
+
+\( \lim\limits_{\Delta x\to 0}\frac{ \Delta f }{ \Delta x }=\lim\limits_{\Delta x\to 0}\frac{6\Delta x+(\Delta x)^2}{\Delta x}=\lim\limits_{\Delta x\to 0}(6+\Delta x)=6 \).
+
+Так как предел существует и конечен, делаем вывод, что функция \(y=x^2\) имеет производную в точке \(x_0=3\) и $y'(3)=6$.
+
+### Производная функции в произвольной точке
+
+Определение. Если функция дифференцируема в каждой точке некоторого множества, то ее называют дифференцируемой на этом множестве.
+
+Пусть функция \(y=f(x)\) имеет производную в каждой точке области определения, то есть для любого \(x\in D\), существует предел
+
+\( \lim\limits_{ \Delta x\to 0}\frac{f(x+ \Delta x)-f(x) }{ \Delta x }=f'(x) \),
+
+тогда можем считать, что в каждой точке области \(D\) определена функция \(f'(x)\) переменной \(x\). Чтобы найти производную функции \(f(x)\) в определенной точке \(x_0\) можно сначала найти функцию \(f'(x)\), а затем вычислить ее значение в заданной точке − \(f'(x_0)\).
+
+Чтобы найти производную функции \(f(x)\) в точке \(x\) нужно выполнить следующие действия:
+
+• Найти значение функции в точке \(x\).
+
+• Задать приращение аргумента \(\Delta x\).
+
+• Найти приращение функции \(\Delta f=f(x+\Delta x)-f(x)\).
+
+• Составить отношение приращения функции к приращению аргумента: \( \frac{\Delta f}{\Delta x}=\frac{f(x+\Delta x)-f(x)}{\Delta x} \).
+
+• Найти предел этого отношения при \(\Delta x \to 0\): \( \lim\limits_{\Delta x\to 0} \frac{\Delta f}{\Delta x}= \lim\limits_{\Delta x\to 0}\frac{f(x+\Delta x)-f(x)}{\Delta x} \).
+Пример 2. Найдем производную функции \(y=x^2\) в произвольной точке:
+
+\( (x^2)'=\lim\limits_{ \Delta x\to 0}\frac{(x+ \Delta x )^2- x^2 }{ \Delta x }= \)
+
+\( =\lim\limits_{ \Delta x\to 0}\frac{x^2+2x \Delta x+( \Delta x )^2 - x^2 }{ \Delta x }=\lim\limits_{ \Delta x\to 0}\frac{2x \Delta x+( \Delta x )^2}{ \Delta x }= \)
+
+\( =\lim\limits_{\Delta x \to 0}(2x+\Delta x)=2x \).
+
+Итак, \((x^2)'=2x\). Теперь можем вычислить значение производной в любой точке \(x_0\), например,
+
+\(y'(3)=\left.{2x}\right|_{x=3}=2\cdot 3=6\).
+
+Чтобы выяснить дифференцируема ли функция в заданной точке достаточно попробовать найти производную функции в этой точке, если производная существует и конечна, то функция дифференцируема, в противном случае - не дифференцируема.
+
+Пример 3. Выясним, дифференцируема ли функция \(y=\left\{\begin{matrix}\frac{\sin x}{x},& x\ne 0; \\ 1,&x=0\end{matrix}\right.\) в точке \(x=0\). По правилам дифференцирования функций найдем производную частного:
+
+\(y'(x)=\frac{\left(\sin x\right)'x-\sin x\cdot x'}{x^2}=\frac{x\cos x-\sin x}{x^2}\)
+
+Найдем значение производной в точке \(x=0\). Так как дробь \(\frac{x\cos x-\sin x}{x^2}\) в нуле не определена, то значение производной будем искать с помощью предела:
+
+\(\lim\limits_{x\to 0}\frac{x\cos x-\sin x}{x^2}=\left[\frac00\right]=\lim\limits_{x\to 0}\frac{x\left(\cos x-1\right)}{x^2}=\)
+
+\(=\lim\limits_{x\to 0}\frac{x^3}{2x^2}=0\).
+
+Здеcь при вычислении предела использовали эквивалентности \(\sin x\sim x,\;\cos x-1\sim -\frac{x^2}{2}\).
+
+Итак, производная функции в точке \(x=0\) существует, конечна и равна нулю, значит функция дифференцируема в этой точке.
+
+### Правила дифференцирования явно заданных функций
+
+Выведем правила, по которым можно находить производные алгебраической суммы, произведения и частного функций.
+
+Теорема. Если функции $f$ и $g$ дифференцируемы в точке $x$, то функции $a \cdot f\left( x \right)$, где $a \in {\bf{R}}$, $f\left( x \right) \pm g\left( x \right)$, $f\left( x \right) \cdot g\left( x \right)$ и $\frac{{f\left( x \right)}}{{g\left( x \right)}}$ (при условии что $g\left( x \right) \neq 0$) дифференцируемы в точке $x$. При этом
+
+а) $\left( {a \cdot f\left( x \right)}\right)^\prime=a \cdot f'\left( x \right)$
+
+б) $\left( {f\left( x \right) \pm g\left( x \right)}\right)^\prime=f'\left( x \right) \pm g'\left( x \right)$
+
+в) $\left( {{{f\left( x \right)}}{{g\left( x \right)}}}\right)^\prime={{f'\left( x \right) \cdot g\left( x \right)+f\left( x \right) \cdot g'\left( x \right)}}$.
+
+г) $\left( {\frac{{f\left( x \right)}}{{g\left( x \right)}}}\right)^\prime=\frac{{f'\left( x \right) \cdot g\left( x \right)-f\left( x \right) \cdot g'\left( x \right)}}{{\left( {g\left( x \right)}\right)^2}}$.
+
+Доказательство. По необходимому и достаточному условию дифференцируемости функции достаточно показать, что функция имеет производную в точке. Найдем производные указанных функций. Например, для частного функций.
+
+$\left( {\frac{{f\left( x \right)}}{{g\left( x \right)}}}\right)^\prime=\lim\limits_{\Delta x \to 0}\frac{{\Delta \frac{{f\left( x \right)}}{{g\left( x \right)}}}}{{\Delta x}}= \lim\limits_{\Delta x \to 0}\frac{{\frac{{f\left( {x + \Delta x}\right)}}{{g\left( {x + \Delta x}\right)}}- \frac{{f\left( x \right)}}{{g\left( x \right)}}}}{{\Delta x}}= $
+
+$=\lim\limits_{\Delta x \to 0}\frac{{f\left( {x + \Delta x}\right) \cdot g\left( x \right)-f\left( x \right) \cdot g\left( {x + \Delta x}\right)}}{{g\left( {x + \Delta x}\right)g\left( x \right)\Delta x}}= \lim\limits_{\Delta x \to 0}\frac{{\frac{{f\left( {x + \Delta x}\right)}}{{\Delta x}}g\left( x \right)-f\left( x \right)\frac{{g\left( {x + \Delta x}\right)}}{{\Delta x}}}}{{g\left( {x + \Delta x}\right)g\left( x \right)}}$.
+
+Так как
+
+$\frac{{f\left( {x + \Delta x}\right)}}{{\Delta x}}\to f'\left( x \right)$, $\;\frac{{g\left( {x + \Delta x}\right)}}{{\Delta x}}\to g'\left( x \right)$
+
+в силу дифференцируемости функций по условию теоремы,
+
+$g\left( {x + \Delta x}\right)g\left( x \right) \to g\left( x \right)^2 $ при $\Delta x \to 0$, так как $g$ дифференцируема, а, следовательно, и непрерывна и $\lim\limits_{\Delta x \to 0}g\left( {x + \Delta x}\right)=g\left( x \right)$.
+
+Таким образом, получили требуемое равенство. Остальные формулы доказываются аналогично.
+
+Следствие 1. Пусть функции ${{u}_{1}}(x),\ \ {{u}_{2}}(x),...,{{u}_{n}}(x)$ дифференцируемы в точке \(x\), тогда их линейная комбинация дифференцируема в точке \(x\) и
+
+$({{c}_{1}}{{u}_{1}}+{{c}_{2}}{{u}_{2}}+...+{{c}_{n}}{{u}_{n}}{)}'=c_1u'_1+c_2u'_2+\ldots +c_nu'_n$.
+
+Следствие 2. Если функции $u(x),\,v(x),\,w(x)$ дифференцируемы, то
+
+$\left(u\cdot v\cdot w\right)'=u'v\ w+u\ v'w+u\ v\ w'$.
+
+### Производная сложной и обратной функции
+
+Теорема (о производной сложной функции). Пусть $y=f(x)$ и для любого $x \in D(f)$ найдется элемент $t \in D(g)$, такой, что $x=g\left( t \right)$, тогда для любого \(t\in D(g)\) можно определить сложную функцию $f\left( {g\left( t \right)}\right)$. Если функция $g$ дифференцируема в точке $t $, а функция $f$ дифференцируема в точке $x=g\left( {t}\right)$, то сложная функция $f\left( {g\left( t \right)}\right)$ дифференцируема в точке $t $. При этом производная сложной функции находится по формуле:
+
+$f'\left( {g\left( {t}\right)}\right)g'\left( {t}\right)=\left( {f\left( {g\left( {t}\right)}\right)}\right)^\prime$
+
+Доказательство. Так как функции $f$ и $g$ дифференцируемы, то их приращения имеют вид:
+
+$\Delta f\left( {x}\right)=f'\left( {x}\right)\Delta x + \alpha \left( {\Delta x}\right)\Delta x$, $\;\Delta g\left( {t}\right)=g'\left( {t}\right)\Delta t + \beta \left( {\Delta t}\right)\Delta t$.
+
+И, так как, $\Delta x=\Delta g\left( {t}\right)$, то
+
+$\Delta f\left( {x}\right)=f'\left( {x}\right)\left( {g'\left( {t}\right)\Delta t + \beta \left( {\Delta t}\right)\Delta t}\right) + \alpha \left( {\Delta x}\right)\left( {g'\left( {t}\right)\Delta t + \beta \left( {\Delta t}\right)\Delta t}\right)=$
+
+$=f'\left( {x}\right)g'\left( {t}\right)\Delta t + f'\left( {x}\right)\beta \left( {\Delta t}\right)\Delta t + \alpha \left( {\Delta x}\right)g'\left( {t}\right)\Delta t + \alpha \left( {\Delta x}\right)\beta \left( {\Delta t}\right)\Delta t$.
+
+Слагаемые $\;f'\left( {x}\right)\beta \left( {\Delta t}\right)\Delta t=o\left( {\Delta t}\right)\;$ и $\;\alpha \left( {\Delta x}\right)\beta \left( {\Delta t}\right)\Delta t=o\left( {\Delta t}\right)\;$, и, так как $\;\Delta x \to 0$ при $\Delta t \to 0$ как приращение непрерывной функции $g$, то $\alpha \left( {\Delta x}\right)g'\left( {t}\right)\Delta t=o\left( {\Delta t}\right)$.
+
+Таким образом:
+
+$\Delta f\left( {x}\right)=f'\left( {x}\right)g'\left( {t}\right)\Delta t + o\left( {\Delta t}\right)$ или
+
+$\Delta f\left( {g\left( {t}\right)}\right)=f'\left( {g\left( {t}\right)}\right)g'\left( {t}\right)\Delta t + o\left( {\Delta t}\right)$,
+
+где, по определению дифференцируемой функции
+
+$f'\left( {g\left( {t}\right)}\right)g'\left( {t}\right)=\left( {f\left( {g\left( {t}\right)}\right)}\right)^\prime$
+
+– искомая производная сложной функции. Теорема доказана. #
+
+Если называть функцию \(f(g)\) внешней функцией, $g$ промежуточным аргументом, а $t$ – основным аргументом, то правило дифференцирования сложной функции можно сформулировать следующим образом: производная сложной функции равна произведению производной внешней функции по промежуточному аргументу на производную внутренней функции по основному аргументу, что еще записывают так:
+
+\(\left(f(g)\right)'=f'_g\cdot g'_t\).
+
+Полученное правило сохраняет свою справедливость для композиции нескольких функций. Например, если $y=y(u)$, $u=u(v)$, $v=v(t)$, $t=t(x)$ и все функции дифференцируемы, то сложная функция $y(u(v(t(x))))$ имеет производную по $x$ и она вычисляется по формуле
+
+$y'(x)=y'_u\cdot u'_v \cdot v'_t \cdot t'_x$.
+
+Теорема (о производной обратной функции). Если функция $y=f(x)$ дифференцируема на множестве \(D\) и ее производная \(f'(x)\ne 0\;\forall x\in D\), то обратная функция \(x=\varphi(x)\) дифференцируема для каждого $y$, равного $f(x)$, и ${\varphi }'(y)=\frac{1}{{f}'(x)}$.
+
+Доказательство. Придадим фиксированному значению $y$ обратной функции приращение $\Delta y$. Соответствующее приращение обратной функции $\Delta x\ne 0$ в силу ее монотонности. Найдем производную обратной функции, выполнив очевидные тождественные преобразования:
+
+${\varphi }'(y)=\lim\limits_{\Delta y\to 0}\frac{\Delta x}{\Delta y}=\lim\limits_{\Delta x\to 0}\frac{1}{\frac{\Delta y}{\Delta x}}=\frac{1}{\lim\limits_{\Delta x\to 0}\frac{\Delta y}{\Delta x}}=\frac{1}{{f}'(x)}$.
+
+Здесь \(\Delta x\to 0\) при \(\Delta y\to 0\) в силу непрерывности функции \(x(y)\). #
+
+### Производные основных элементарных функций
+
+Пользуясь определением производной, правилами дифференцирования и теоремой о дифференцируемости обратной функции найдем производные основных элементарных функций.
+
+1. $c' = 0$, где $c = \text{const}$.
+
+Так как для функции $y=c$ значения \(y(x)=c\) и \(y(x+\Delta x)=c\), то по определению производной получим:
+
+$c' = \lim\limits_{\Delta x \to 0}\frac{{\Delta y}}{{\Delta x}}= \lim\limits_{\Delta x \to 0}\frac{{y\left( {x + \Delta x}\right) - y\left( x \right)}}{{\Delta x}}= \lim\limits_{\Delta x \to 0}\frac{{c - c}}{{\Delta x}}= 0$.#
+
+2. $\left( {x^a }\right)^\prime = ax^{a - 1}$
+
+По определению производной для функции \(y=x^a\) запишем
+
+$y' = \lim\limits_{\Delta x \to 0}\frac{\Delta y}{\Delta x}= \lim\limits_{\Delta x \to 0}\frac{{\left( {x + \Delta x}\right)^a - x^a }}{{\Delta x}}= $
+
+В числителе вынесем общий множитель \( x^a\) за скобки и так как \(\frac{{\Delta x}}{x}\to 0\) при \(\Delta x\to 0\), то воспользуемся эквивалентностью \(\left(1+\frac{\Delta x}{x}\right)^a\sim 1+a\frac{\Delta x}{x}\):
+
+$\lim\limits_{\Delta x \to 0}\frac{{x^a \left( \left( {1 + \frac{{\Delta x}}{x}}\right)^a- 1\right)}}{{\Delta x}}= \lim\limits_{\Delta x \to 0}\frac{{x^a \left( {1 + a\frac{{\Delta x}}{x}- 1}\right)}}{{\Delta x}}= \lim\limits_{\Delta x \to 0}\frac{{x^a a\frac{{\Delta x}}{x}}}{{\Delta x}}= \lim\limits_{\Delta x \to 0}\frac{{x^a a}}{x}= ax^{a - 1}$. #
+
+3. $\left( {\log _a x}\right)^\prime = \frac{1}{{x\ln a}}$
+
+$\left( {\log _a x}\right)^\prime = \lim\limits_{\Delta x \to 0}\frac{{\Delta \left( {\log _a x}\right)}}{{\Delta x}}= \lim\limits_{\Delta x \to 0}\frac{{\log _a \left( {x + \Delta x}\right) - \log _a x}}{{\Delta x}}= \lim\limits_{\Delta x \to 0}\frac{{\log _a \left( {\frac{{x + \Delta x}}{x}}\right)}}{{\Delta x}}=$
+
+$ = \lim\limits_{\Delta x \to 0}\frac{{\ln \left( {1 + \frac{{\Delta x}}{x}}\right)}}{{\Delta x \cdot \ln a}}= \lim\limits_{\Delta x \to 0}\overbrace {\frac{{\ln \left( {1 + \overbrace {\frac{{\Delta x}}{x}}^{ 0 \atop \uparrow}}\right)}}{{\Delta x \cdot \ln a}}}^{ \sim \frac{{\Delta x}}{x}}= \lim\limits_{\Delta x \to 0}\frac{{\frac{{\Delta x}}{x}}}{{\Delta x \cdot \ln a}}= \frac{1}{{x\ln a}}$.#
+
+4. $\left( {a^x }\right)^\prime = a^x \ln a$
+
+Пусть $y = a^x $, тогда, $x = \log _a y$, по теореме о производной обратной функции
+
+$y' = \frac{1}{{x'}}= \frac{1}{{\left( {\log _a y}\right)^\prime }}= \frac{1}{{\frac{1}{{y\ln a}}}}= y\ln a = a^x \ln a$. #
+
+5. $\left( {\sin x}\right)^\prime = \cos x$
+
+$\left( {\sin x}\right)^\prime = \lim\limits_{\Delta x \to 0}\frac{{\Delta \left( {\sin x}\right)}}{{\Delta x}}= \lim\limits_{\Delta x \to 0}\frac{{\sin \left( {x + \Delta x}\right) - \sin x}}{{\Delta x}}= $
+
+$ = \lim\limits_{\Delta x \to 0}\frac{{2\sin \left( {\frac{{x + \Delta x - x}}{2}}\right)\cos \left( {\frac{{x + \Delta x + x}}{2}}\right)}}{{\Delta x}}= \lim\limits_{\Delta x \to 0}\frac{{\sin \left( {\frac{{\Delta x}}{2}}\right)\cos \left( {\frac{{2x + \Delta x}}{2}}\right)}}{{\frac{{\Delta x}}{2}}}= $
+
+$ = \lim\limits_{\Delta x \to 0}\cos \left( {\frac{{2x + \Delta x}}{2}}\right) = \cos \frac{{2x}}{2}= \cos x$. #
+
+6. $\left( {\cos x}\right)^\prime = - \sin x$.
+
+Доказывается аналогично предыдущему с использованием тригонометрических формул.
+
+7. $\left( {\text{tg}x}\right)^\prime = \frac{1}{{\cos ^2 x}}$
+
+$\left( {\text{tg}x}\right)^\prime = \left( {\frac{{\sin x}}{{\cos x}}}\right)^\prime = \frac{{\overbrace {\left( {\sin x}\right)^\prime}^{ \cos x \atop \parallel }\cos x - \sin x\overbrace {\left( {\cos x}\right)^\prime }^{ - \sin x \atop \parallel }}}{{\cos ^2 x}}= \frac{{\cos ^2 x + \sin ^2 x}}{{\cos ^2 x}}= \frac{1}{{\cos ^2 x}}$.#
+
+8. $\left( {\text{ctg}x}\right)^\prime = - \frac{1}{{\sin ^2 x}}$
+
+Доказывается аналогично предыдущему с использованием представления котангенса через отношение косинуса к синусу и формулы производной частного.
+
+9. $\left( {\arcsin x}\right)^\prime = \frac{1}{{\sqrt {1 - x^2 }}}$
+
+Пусть $y = \arcsin x$, тогда $x = \sin y$ и по теореме о производной обратной функции:
+
+$y' = \frac{1}{{x'}}= \frac{1}{{\left( {\sin y}\right)^\prime }}= \frac{1}{{\cos y}}= \frac{1}{{\cos \arcsin x}}= \frac{1}{{\sqrt {1 - \sin ^2 \arcsin x}}}= \frac{1}{{\sqrt {1 - x^2 }}}$. #
+
+10. $\left( {\arccos x}\right)^\prime = - \frac{1}{{\sqrt {1 - x^2 }}}$.
+
+Доказывается аналогично предыдущему.
+
+11. $\left( {\text{arctg}x}\right)^\prime = \frac{1}{{1 + x^2 }}$
+
+Пусть $y = \text{arctg}x$, тогда $x = \text{tg}y$ – обратная функция и по теореме о производной обратной функции:
+
+$y' = \frac{1}{{x'}}= \frac{1}{{\left( {\text{tg}y}\right)^\prime }}= \frac{1}{{\frac{1}{{\cos ^2 y}}}}= \cos ^2 y = \cos ^2 \text{arctg}x$.
+
+Так как $1 + \text{tg}^2 x = \frac{1}{{\cos ^2 x}}$, то $\cos ^2 x = \frac{1}{{1 + \text{tg}^2 x}}$, следовательно, $\cos ^2 \text{arctg}x = \frac{1}{{1 + \text{tg}^2 \text{arctg}x}}= \frac{1}{{1 + x^2 }}$.#
+
+12. $\left( {\text{arcctg}x}\right)^\prime = - \frac{1}{{1 + x^2 }}$.
+
+Доказывается аналогично предыдущему.
+
+Гиперболические функции
+
+13. $\left( {\text{sh }x}\right)^\prime = \text{ch }x$
+
+$\left( {\text{sh }x}\right)^\prime = \left( {\frac{{e^x - e^{ - x}}}{2}}\right)^\prime = \frac{1}{2}\cdot \left( {\left( {e^x }\right)^\prime - \left( {e^{ - x}}\right)^\prime }\right) = \frac{1}{2}\left( {e^x - e^{ - x}\overbrace {\left( { - x}\right)^\prime }^{ - 1 \atop \parallel }}\right) = \frac{{e^x + e^{ - x}}}{2}= \text{ch }x$. #
+
+14. $\left( {\text{ch }x}\right)^\prime = \text{sh }x$
+
+15. $\left( {\text{th }x}\right)^\prime = \frac{1}{{\text{ch }^2 x}}$
+
+$\left( {\text{th }x}\right)^\prime = \left( {\frac{{\text{sh }x}}{{\text{ch }x}}}\right)^\prime = \frac{{\left( {\text{sh }x}\right)^\prime \text{ch }x - \text{sh }x\left( {\text{ch }x}\right)^\prime }}{{\text{ch }^2 x}}= \frac{{\text{ch }^2 x - \text{sh }^2 x}}{{\text{ch }^2 x}}= \frac{1}{{\text{ch }^2 x}}$.
+
+Здесь $\text{ch }^2 x - \text{sh }^2 x = 1$ по тождествам для гиперболических функций. #
+
+16. $\left( {\text{cth }x}\right)^\prime = - \frac{1}{{\text{sh }^2 x}}$.
+
+### Таблица производных
+
+• \(\left(x^{\alpha}\right)^\prime=\alpha\cdot x^{\alpha-1}\). Частные случаи: \(\left(\frac1x\right)’=-\frac1{x^2}\); \(\left(\sqrt x\right)’=\frac{1}{2\sqrt x}\)
+• \(\left(a^x\right)^\prime=a^x\ln a\). Частный случай \(\left(e^x\right)^\prime=e^x\)
+• \(\left(\log_ax\right)^\prime=\frac{1}{x\cdot\ln a}\). Частный случай \(\left(\ln x\right)^\prime=\frac1x\)
+• \(\left(\sin{x}\right)^\prime=\cos{x}\)
+• \(\left(\cos{x}\right)^\prime=-\sin{x}\)
+• \(\left({\rm tg}\,x\right)^\prime=\frac{1}{\cos^2x}\)
+• \(\left({\rm ctg}\,x\right)^\prime=-\frac{1}{\sin^2x}\)
+• \(\left(\arcsin x\right)^\prime=\frac{1}{\sqrt{1-x^2}}\)
+• \(\left(\arccos x\right)^\prime=-\frac{1}{\sqrt{1-x^2}}\)
+• \(\left({\rm arctg}\,x\right)^\prime=\frac{1}{1+x^2}\)
+• \(\left({\rm arcctg}\,x\right)^\prime=-\frac{1}{1+x^2}\)
+
+### Примеры нахождения производных
+
+Пример 4. Найти производную функции $y=3\sqrt[3]{x}-2\sqrt{x^3}-\frac{1}{x^2}$
+
+Р е ш е н и е. Данная функция является суммой степенных функций, поэтому для нахождения производной воспользуемся правилами дифференцирования
+
+$\left(u\pm v\right)^{\prime}=u^{\prime}\pm v^{\prime}$$, $$\left(C\cdot u\right)^{\prime}=C\cdot u^{\prime}$
+
+и формулой для производной степенной функции $(x^n)^{\prime}=n\cdot x^{n-1}$:
+
+$y^{\prime}=\left(3\sqrt[3]{x}\right)^{\prime}-\left(2\sqrt{x^3}\right)^{\prime}-\left(\frac{1}{x^2}\right)^{\prime}=3\left(x^{\frac13}\right)^{\prime}-2\left(x^{\frac32}\right)^{\prime}-\left(x^{-2}\right)^{\prime}=$$ $$=3\cdot\frac13 x^{\frac13-1}-2\cdot\frac32\cdot x^{\frac32-1}-(-2)\cdot x^{-2-1}=x^{-\frac23}-3x^{\frac12}+2x^{-3}=\frac{1}{\sqrt[3]{x^2}}-3\sqrt{x}+\frac{2}{x^3}$.
+
+Пример 5. Найти производную функции $y=x^3\cdot\sin{x}$.
+
+Р е ш е н и е. Данная функция является произведением степенной функции и тригонометрической, поэтому для нахождения производной воспользуемся правилом дифференцирования произведения $\left(u\cdot v\right)^{\prime}=u^{\prime}\cdot v+u\cdot v^{\prime}$ и формулами производных $\left(x^n\right)^{\prime}=n\cdot x^{n-1}$ и $\left(\sin{x}\right)^{\prime}=\cos{x}$:
+
+$y^{\prime}=(x^3\cdot\sin{x})^{\prime}=(x^3)^{\prime}\cdot\sin{x}+x^3\cdot(\sin{x})^{\prime}=3x^2\cdot\sin{x}+x^3\cdot\cos{x}=x^2(3\sin{x}+x\cdot\cos{x})$.
+
+Пример 6. Найти производную функции $y=\frac{2-3x}{1+x}$.
+
+Р е ш е н и е. Данная функция является рациональной дробью, поэтому для нахождения производной воспользуемся правилом дифференцирования частного $\left(\frac uv\right)^{\prime}=\frac{u^{\prime}\cdot v-u\cdot v^{\prime}}{v^2}$, $v\neq 0$:
+
+$y^{\prime}=\left(\frac{2-3x}{1+x}\right)^{\prime}=\frac{(2-3x)^{\prime}\cdot(1+x)-(2-3x)\cdot(1+x)^{\prime}}{(1+x)^2}=\frac{-3(1+x)-(2-3x)\cdot 1}{(1+x)^2}=\frac{-3-3x-2+3x}{(1+x)^2}=\frac{-5}{(1+x)^2}$,
+
+так как по правилам дифференцирования суммы
+
+$(2-3x)^{\prime}=(2)^{\prime}-(3x)^{\prime}=0-3(x)^{\prime}=-3\cdot 1=-3$$; $$\;\;(1+x)^{\prime}=(1)^{\prime}+(x)^{\prime}=0+1=1$.
+
+Ответы в задачах записывайте, ориентируясь на образец:
+
+18*x^(3)-4*x^(-3)+2*x^(-3/2);
+
+2*e^(2*x)*sin(x)+e^(x)*cos(x)
+
+Для дроби используйте, например, такую форму:
+
+(3*x-x^(2))/((x^(2)-1)^2)

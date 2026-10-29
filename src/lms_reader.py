@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import sys
 import time
@@ -104,7 +105,10 @@ def _session_bootstrap_js(
 
 
 def load_auth_token(state_file: Path = DEFAULT_STATE) -> str | None:
-    """Извлечь JWT-токен DiSpace (ключ authToken в localStorage) из browser_state.json."""
+    """Извлечь JWT-токен DiSpace (из переменной окружения DISPACE_AUTH_TOKEN или browser_state.json)."""
+    env_tok = os.environ.get("DISPACE_AUTH_TOKEN", "").strip().strip('"')
+    if env_tok:
+        return env_tok
     if not state_file.exists():
         return None
     try:
