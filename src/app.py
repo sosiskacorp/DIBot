@@ -22,7 +22,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import requests  # noqa: E402
 
+from ingest import extract_docx_bytes, extract_pdf_bytes  # noqa: E402
 from llm_client import LLMClient, LLMError  # noqa: E402
+from lms_reader import get_api_client  # noqa: E402
 from materials import MaterialStore  # noqa: E402
 from notes import NoteBuilder  # noqa: E402
 from tutor import Tutor  # noqa: E402
@@ -123,7 +125,7 @@ with tabs[0]:
             courses = ["все"] + get_store().list_courses()
             course_filter = st.selectbox("Курс", courses)
 
-        submitted = st.form_submit_button("Решить", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Решить", type="primary", width="stretch")
 
     if submitted and question.strip():
         tutor = get_tutor()
@@ -176,7 +178,10 @@ with tabs[1]:
             course = st.text_input("Курс", placeholder="Линейная алгебра")
             title = st.text_input("Название", placeholder="Лекция 1. Матрицы")
             url = st.text_input("Ссылка (необязательно)", placeholder="https://dispace.nstu.ru/...")
-            uploaded = st.file_uploader("Файл .txt / .md / .pdf", type=["txt", "md", "markdown", "pdf"])
+            uploaded = st.file_uploader(
+                "Файл .txt / .md / .pdf / .docx",
+                type=["txt", "md", "markdown", "pdf", "docx"],
+            )
             pasted = st.text_area("…или вставь текст", height=120)
             add = st.form_submit_button("Сохранить", type="primary")
 
@@ -186,22 +191,18 @@ with tabs[1]:
             else:
                 text = pasted
                 if uploaded:
-                    if uploaded.name.lower().endswith(".pdf"):
+                    uname = uploaded.name.lower()
+                    if uname.endswith(".pdf"):
                         try:
-                            from pypdf import PdfReader
-
-                            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-                                tmp.write(uploaded.getbuffer())
-                                tmp_path = Path(tmp.name)
-                            text = "\n\n".join(
-                                (page.extract_text() or "") for page in PdfReader(str(tmp_path)).pages
-                            )
-                            tmp_path.unlink(missing_ok=True)
-                        except ImportError:
-                            st.error("Для PDF нужен pypdf: pip install pypdf")
-                            text = ""
+                            text = extract_pdf_bytes(bytes(uploaded.getbuffer()))
                         except Exception as exc:
                             st.error(f"Не удалось прочитать PDF: {exc}")
+                            text = ""
+                    elif uname.endswith(".docx"):
+                        try:
+                            text = extract_docx_bytes(bytes(uploaded.getbuffer()))
+                        except Exception as exc:
+                            st.error(f"Не удалось прочитать DOCX: {exc}")
                             text = ""
                     else:
                         text = uploaded.getvalue().decode("utf-8", errors="replace")
@@ -222,7 +223,7 @@ with tabs[1]:
     st.divider()
     st.markdown("**Что уже загружено**")
     if not store.sources:
-        st.info("Пока пусто. Добавь лекцию выше или импортируй страницу диспейса.")
+        st.info("Пока пусто. Добавь лекцию выше или импортируй курс из диспейса.")
     for course_name in store.list_courses():
         with st.expander(f"{course_name} — {len(store.list_sources(course_name))} источников"):
             for source in store.list_sources(course_name):
@@ -240,39 +241,93 @@ with tabs[1]:
     st.divider()
     st.markdown("**Импорт из диспейса**")
     st.caption(
-        "Читалка работает в отдельном окне браузера: ты входишь сам, пароль не сохраняется. "
-        "Скрипт только читает страницы."
+        "Читалка работает через локальную сессию браузера: ты входишь сам, пароль не сохраняется. "
+        "Импортируются лекции (с формулами LaTeX) и прикреплённые методички (.pdf, .docx)."
     )
-    col_a, col_b = st.columns(2)
+    dispace_api = get_api_client(auto_refresh=False)
+    dispace_courses = dispace_api.list_courses() if dispace_api else []
+
+    col_a, col_b = st.columns([2, 3])
     with col_a:
-        if st.button("1. Войти в диспейс"):
+        if dispace_api:
+            st.success(f"Сессия DiSpace активна · доступно курсов: {len(dispace_courses)}")
+        else:
+            st.warning("Сессия DiSpace не активна или требует обновления")
+        if st.button("1. Войти / обновить сессию DiSpace", width="stretch"):
             subprocess.Popen(
                 [sys.executable, str(PROJECT_ROOT / "src" / "lms_reader.py"), "--login"],
                 cwd=str(PROJECT_ROOT),
             )
-            st.info("Открылось окно браузера. Войди в нём, затем вернись сюда.")
+            st.info("Открылось окно браузера. Войди в нём, затем обнови страницу.")
+
+        if dispace_courses:
+            with st.form("import_full_course"):
+                selected_dc = st.selectbox(
+                    "Импортировать весь курс целиком",
+                    dispace_courses,
+                    format_func=lambda c: f"#{c['id']} {c['title']}"
+                    + (f" ({c['discipline']})" if c.get("discipline") else ""),
+                )
+                custom_course_name = st.text_input(
+                    "Название в базе (необязательно)",
+                    placeholder=selected_dc["discipline"] or selected_dc["title"],
+                )
+                run_full_import = st.form_submit_button(
+                    "Скачать все темы и методички курса", type="primary", width="stretch"
+                )
+            if run_full_import and selected_dc:
+                target_name = (
+                    custom_course_name.strip()
+                    or selected_dc.get("discipline")
+                    or selected_dc["title"]
+                )
+                with st.spinner(f"Импортирую курс «{selected_dc['title']}»…"):
+                    proc = subprocess.run(
+                        [
+                            sys.executable,
+                            str(PROJECT_ROOT / "src" / "lms_reader.py"),
+                            "--import-course",
+                            str(selected_dc["id"]),
+                            "--course",
+                            target_name,
+                        ],
+                        cwd=str(PROJECT_ROOT),
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=300,
+                    )
+                st.code((proc.stdout or "") + (proc.stderr or ""))
+                get_tutor.clear()
+                st.rerun()
+
     with col_b:
         with st.form("import_page"):
-            page_url = st.text_input("Ссылка на страницу курса")
-            page_course = st.text_input("Курс для сохранения")
-            run_import = st.form_submit_button("2. Импортировать страницу")
-        if run_import and page_url and page_course:
-            with st.spinner("Читаю страницу…"):
+            page_url = st.text_input(
+                "Ссылка на страницу, тему или ID курса",
+                placeholder="https://dispace.nstu.ru/course/3121/32823",
+            )
+            page_course = st.text_input("Курс для сохранения", placeholder="Математический анализ")
+            run_import = st.form_submit_button("2. Импортировать по ссылке", width="stretch")
+        if run_import and page_url:
+            cmd = [
+                sys.executable,
+                str(PROJECT_ROOT / "src" / "lms_reader.py"),
+                "--import",
+                page_url.strip(),
+            ]
+            if page_course.strip():
+                cmd.extend(["--course", page_course.strip()])
+            with st.spinner("Читаю материалы…"):
                 proc = subprocess.run(
-                    [
-                        sys.executable,
-                        str(PROJECT_ROOT / "src" / "lms_reader.py"),
-                        "--import",
-                        page_url,
-                        "--course",
-                        page_course,
-                    ],
+                    cmd,
                     cwd=str(PROJECT_ROOT),
                     capture_output=True,
                     text=True,
                     encoding="utf-8",
                     errors="replace",
-                    timeout=180,
+                    timeout=240,
                 )
             st.code((proc.stdout or "") + (proc.stderr or ""))
             get_tutor.clear()
@@ -418,7 +473,7 @@ with tabs[4]:
                     "запасные": ", ".join(route.fallback) or "—",
                 }
             )
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.dataframe(rows, width="stretch", hide_index=True)
 
         st.markdown("**Независимость проверки**")
         for model in llm.router.models:

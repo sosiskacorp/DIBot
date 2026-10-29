@@ -87,17 +87,21 @@ SearXNG поднимется на `http://localhost:8080`. Остановка: `
 ### 4. Читалка диспейса
 
 ```powershell
-python src/lms_reader.py --login          # войти вручную, сессия сохранится
-python src/lms_reader.py --courses        # список курсов
-python src/lms_reader.py --read "https://dispace.nstu.ru/course/..."
-python src/lms_reader.py --links "https://dispace.nstu.ru/course/..."   # отладка навигации
-python src/lms_reader.py --import "https://dispace.nstu.ru/course/..." --course "Линейная алгебра"
+python src/lms_reader.py --login          # войти вручную (или обновить SSO), сессия сохранится
+python src/lms_reader.py --courses        # список курсов (/courses/my и дисциплины)
+python src/lms_reader.py --disciplines    # список дисциплин и контрольных (/education)
+python src/lms_reader.py --events         # расписание вебинаров и лекций (/events)
+python src/lms_reader.py --links 3121     # список модулей и тем курса
+python src/lms_reader.py --read "https://dispace.nstu.ru/course/3121/32823"
+python src/lms_reader.py --import "https://dispace.nstu.ru/course/3121/32823" --course "Математический анализ"
+python src/lms_reader.py --import-course 3095 --course "Линейная алгебра"
 ```
 
-`dispace.nstu.ru` — SPA «Dicourse». Читалка берёт отрисованный текст страницы
-и попутно запоминает JSON, который загружает само приложение. Если ссылки
-курса не распознались, откройте нужную страницу через `--read` и передайте
-её URL в `--import`.
+`dispace.nstu.ru` — Vue 3 SPA «Dicourse» с авторизацией через Keycloak SSO (`login2.nstu.ru`).
+После входа токен `authToken` из `localStorage` сохраняется в `data/browser_state.json`.
+Читалка забирает лекции напрямую через read-only API `api/v1/view/...` с сохранением
+исходных формул LaTeX (`$...$`), а также скачивает и извлекает текст из прикреплённых
+методичек и задачников (`.pdf`, включая старые TeX-шрифты в CP1251, и `.docx`).
 
 После входа рядом с профилем сохраняются `data/browser_state.json` и
 `data/browser_session_storage.json`. Это токены сессии — не передавайте их
