@@ -74,6 +74,34 @@ st.set_page_config(
 )
 
 
+def _push_git_info_to_client() -> None:
+    """Отправить метаданные GitHub-репозитория клиенту сразу при загрузке страницы.
+
+    В Streamlit на Windows возникает гонка: при первом клике на кнопку Deploy диалог
+    открывается раньше, чем приходит ответ на асинхронный loadGitInfo, из-за чего
+    показывается «Unable to deploy». Предварительная отправка git_info_changed устраняет это.
+    """
+    try:
+        from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
+        from streamlit.proto.GitInfo_pb2 import GitInfo
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+        ctx = get_script_run_ctx()
+        if ctx is None:
+            return
+        msg = ForwardMsg()
+        msg.git_info_changed.repository = "sosiskacorp/DIBot"
+        msg.git_info_changed.branch = "main"
+        msg.git_info_changed.module = "streamlit_app.py"
+        msg.git_info_changed.state = GitInfo.GitStates.DEFAULT
+        ctx.enqueue(msg)
+    except Exception:
+        pass
+
+
+_push_git_info_to_client()
+
+
 # --------------------------------------------------------------- ресурсы
 
 
