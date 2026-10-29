@@ -44,30 +44,45 @@ with sys._dibot_import_lock:  # type: ignore[attr-defined]
     import lms_reader as _lms_reader_mod  # noqa: E402
     import tutor as _tutor_mod  # noqa: E402
 
-    if (
-        not hasattr(_materials_mod.MaterialStore, "reload")
-        or not hasattr(_ingest_mod, "decode_bytes_smart")
-        or not hasattr(_lms_reader_mod, "authenticate_dispace_input")
-        or not hasattr(_tutor_mod, "_is_meta_or_conversational")
-    ):
-        for _mod in (
-            _materials_mod,
-            _llm_client_mod,
-            _notes_mod,
-            _ingest_mod,
-            _verification_mod,
-            _lms_reader_mod,
-            _tutor_mod,
-        ):
+    # Перезагружаем модули, если исходники изменились (иначе запущенный сервер держит старые классы,
+    # и появляются ошибки вида «'DiSpaceAPI' object has no attribute 'get_course_overview'»)
+    _mods_all = (
+        _materials_mod,
+        _llm_client_mod,
+        _notes_mod,
+        _ingest_mod,
+        _verification_mod,
+        _lms_reader_mod,
+        _tutor_mod,
+    )
+
+    def _mod_mtime(_m: Any) -> float:
+        try:
+            return os.path.getmtime(_m.__file__)
+        except Exception:
+            return 0.0
+
+    _cur_mtimes = {_m.__name__: _mod_mtime(_m) for _m in _mods_all}
+    _prev_mtimes = getattr(sys, "_dibot_mod_mtimes", None)
+    _missing_api = (
+        not hasattr(_lms_reader_mod.DiSpaceAPI, "get_course_overview")
+        or not hasattr(_tutor_mod.Tutor, "solve_course_assignment")
+        or not hasattr(_ingest_mod, "paginate_markdown")
+    )
+    if _missing_api or (_prev_mtimes is not None and _prev_mtimes != _cur_mtimes):
+        for _mod in _mods_all:
             sys.modules[_mod.__name__] = _mod
             importlib.reload(_mod)
+    sys._dibot_mod_mtimes = _cur_mtimes  # type: ignore[attr-defined]
 
 from ingest import (  # noqa: E402
+    clean_pdf_artifacts,
     decode_bytes_smart,
     extract_docx_bytes,
     extract_pdf_bytes,
     format_math_markdown,
     html_to_text,
+    paginate_markdown,
 )
 from llm_client import LLMClient, LLMError  # noqa: E402
 from lms_reader import (  # noqa: E402
@@ -268,36 +283,80 @@ def open_material_reader_dialog(
     text: str = "",
 ) -> None:
     """Отдельное полноэкранное окно для комфортного чтения длинных лекций и методичек с пагинацией."""
-    full_text = full_text or text
+    full_text = clean_pdf_artifacts(full_text or text)
     st.markdown(f"#### {title}")
     st.caption(f"Курс: **{course}** · Всего символов: `{len(full_text):,}`".replace(",", " ") + (f" · [Открыть в DiSpace]({url})" if url else ""))
 
-    page_size = 10000
-    total_pages = max(1, (len(full_text) + page_size - 1) // page_size)
-    dlg_page_key = f"dlg_reader_page_{slugify(title)}"
-    cur_page = int(st.session_state.get(dlg_page_key, 1))
-    cur_page = max(1, min(cur_page, total_pages))
+    dlg_key = slugify(title)[:60]
+    size_label = st.radio(
+        "Размер страницы",
+        ["5 000 симв.", "10 000 симв.", "20 000 симв."],
+        index=1,
+        horizontal=True,
+        key=f"dlg_size_{dlg_key}",
+        label_visibility="collapsed",
+    )
+    page_size = int(size_label.split()[0]) * 1000
+    pages = paginate_markdown(full_text, page_size=page_size)
+    total_pages = len(pages)
+    dlg_page_key = f"dlg_reader_page_{dlg_key}_{page_size}"
+    cur_page = max(1, min(int(st.session_state.get(dlg_page_key, 1)), total_pages))
 
-    c1, c2, c3, c4 = st.columns([1, 2, 1, 2])
-    with c1:
-        if st.button("⬅️ Назад", disabled=(cur_page <= 1), key=f"dlg_prev_{slugify(title)}", width="stretch"):
-            st.session_state[dlg_page_key] = cur_page - 1
-            cur_page -= 1
-    with c2:
-        st.markdown(f"<div style='text-align:center;padding-top:6px;'><b>Страница {cur_page} из {total_pages}</b></div>", unsafe_allow_html=True)
-    with c3:
-        if st.button("Далее ➡️", disabled=(cur_page >= total_pages), key=f"dlg_next_{slugify(title)}", width="stretch"):
-            st.session_state[dlg_page_key] = cur_page + 1
-            cur_page += 1
-    with c4:
-        show_all = st.toggle("Показать весь текст целиком", value=(total_pages == 1), key=f"dlg_all_{slugify(title)}")
+    def _nav(suffix: str) -> None:
+        nonlocal cur_page
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c1:
+            if st.button("⬅️ Назад", disabled=(cur_page <= 1), key=f"dlg_prev_{dlg_key}_{suffix}", width="stretch"):
+                cur_page -= 1
+                st.session_state[dlg_page_key] = cur_page
+                st.rerun(scope="fragment")
+        with c2:
+            st.markdown(
+                f"<div style='text-align:center;padding-top:6px;'><b>Страница {cur_page} из {total_pages}</b></div>",
+                unsafe_allow_html=True,
+            )
+        with c3:
+            if st.button("Далее ➡️", disabled=(cur_page >= total_pages), key=f"dlg_next_{dlg_key}_{suffix}", width="stretch"):
+                cur_page += 1
+                st.session_state[dlg_page_key] = cur_page
+                st.rerun(scope="fragment")
 
+    if total_pages > 1:
+        _nav("top")
     st.divider()
-    slice_text = full_text if show_all else full_text[(cur_page - 1) * page_size : cur_page * page_size]
-    render_rich_content(slice_text)
+    render_rich_content(pages[cur_page - 1])
+    if total_pages > 1:
+        st.divider()
+        _nav("bottom")
 
 
-CHAT_HISTORY_FILE = PROJECT_ROOT / "data" / "chat_sessions.json"
+CHAT_HISTORY_FILE = PROJECT_ROOT / "data" / "chat_sessions.json"  # старый общий файл (только для миграции)
+CHAT_HISTORY_DIR = PROJECT_ROOT / "data" / "chat_history"
+
+
+def _dispace_user_from_token(token: str) -> dict[str, Any] | None:
+    """Достать user_id из уже проверенного (verify_token) JWT DiSpace."""
+    import base64 as _b64
+    import hashlib as _hashlib
+
+    try:
+        payload_b64 = token.split(".")[1]
+        payload = json.loads(_b64.urlsafe_b64decode(payload_b64 + "===").decode("utf-8"))
+        uid = str(payload.get("user_id") or payload.get("sub") or "").strip()
+    except Exception:
+        return None
+    if not uid:
+        return None
+    key = _hashlib.sha256(f"dibot-user:{uid}".encode("utf-8")).hexdigest()[:24]
+    return {"id": uid, "key": key}
+
+
+def _chat_history_file(owner_key: str) -> Path | None:
+    """Файл истории конкретного пользователя (имя — хэш его user_id). Для гостей история на диск не пишется."""
+    if not owner_key or owner_key == "guest":
+        return None
+    safe = "".join(ch for ch in owner_key if ch.isalnum())[:32]
+    return CHAT_HISTORY_DIR / f"{safe}.json"
 
 
 def _serialize_chat_sessions(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -336,19 +395,32 @@ def _serialize_chat_sessions(sessions: list[dict[str, Any]]) -> list[dict[str, A
 
 
 def _init_chat_sessions() -> None:
-    if "chat_sessions" in st.session_state and st.session_state["chat_sessions"]:
+    """Загрузить историю чатов ТЕКУЩЕГО пользователя DiSpace (у гостей история живёт только во вкладке)."""
+    owner = st.session_state.get("dibot_user_key") or "guest"
+    if (
+        st.session_state.get("chat_owner") == owner
+        and "chat_sessions" in st.session_state
+        and st.session_state["chat_sessions"]
+    ):
         return
     loaded: list[dict[str, Any]] = []
-    if IS_LOCAL_PC and CHAT_HISTORY_FILE.exists():
-        try:
-            raw = json.loads(CHAT_HISTORY_FILE.read_text(encoding="utf-8"))
-            if isinstance(raw, list):
-                loaded = raw
-        except Exception:
-            loaded = []
+    hist_file = _chat_history_file(owner)
+    if hist_file is not None:
+        src_file = hist_file
+        # Однократный перенос старой общей истории на локальном ПК владельцу
+        if not hist_file.exists() and IS_LOCAL_PC and CHAT_HISTORY_FILE.exists():
+            src_file = CHAT_HISTORY_FILE
+        if src_file.exists():
+            try:
+                raw = json.loads(src_file.read_text(encoding="utf-8"))
+                if isinstance(raw, list):
+                    loaded = raw
+            except Exception:
+                loaded = []
     if not loaded:
         now_str = datetime.now().strftime("%d.%m %H:%M")
         loaded = [{"id": f"chat_{int(time.time())}", "title": "Новый диалог", "updated_at": now_str, "turns": []}]
+    st.session_state["chat_owner"] = owner
     st.session_state["chat_sessions"] = loaded
     st.session_state["active_chat_id"] = loaded[0]["id"]
     st.session_state.chat_turns = list(loaded[0].get("turns") or [])
@@ -369,10 +441,11 @@ def _save_active_chat_turns() -> None:
                 if first_line:
                     s["title"] = first_line[:42] + ("…" if len(first_line) > 42 else "")
             break
-    if IS_LOCAL_PC:
+    hist_file = _chat_history_file(st.session_state.get("chat_owner") or "guest")
+    if hist_file is not None:
         try:
-            CHAT_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-            CHAT_HISTORY_FILE.write_text(
+            hist_file.parent.mkdir(parents=True, exist_ok=True)
+            hist_file.write_text(
                 json.dumps(_serialize_chat_sessions(st.session_state["chat_sessions"]), ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
@@ -483,7 +556,7 @@ def render_rich_content(text: str) -> None:
         return
     import re as _re
 
-    formatted = format_math_markdown(text)
+    formatted = format_math_markdown(clean_pdf_artifacts(text))
     st.markdown(formatted)
 
     # Если в тексте встречаются ссылки на видео (🎬 [Название](url) или прямые ссылки на kinescope/mp4/youtube),
@@ -569,6 +642,44 @@ stats = store.stats()
 status = ollama_status()
 dispace_api = get_session_dispace_api(auto_refresh=False)
 
+# Идентификация пользователя по проверенной сессии DiSpace: история чатов привязывается к нему,
+# а функции с моделями доступны только авторизованным (гости могут лишь смотреть материалы).
+_current_user = _dispace_user_from_token(dispace_api.token) if dispace_api else None
+st.session_state["dibot_user_key"] = _current_user["key"] if _current_user else "guest"
+IS_AUTHORIZED = _current_user is not None
+
+
+def require_auth(feature: str, key: str) -> bool:
+    """Показать заглушку для гостя и вернуть False, если пользователь не вошёл в DiSpace."""
+    if IS_AUTHORIZED:
+        return True
+    with st.container(border=True):
+        st.warning(
+            f"🔒 **{feature}** доступно только после входа в DiSpace НГТУ. "
+            "Гостевой режим позволяет только просматривать материалы."
+        )
+        if st.button("🔑 Войти в DiSpace", key=f"auth_gate_{key}", type="primary"):
+            open_dispace_browser_login_dialog(
+                importlib.util.find_spec("playwright") is None or sys.platform != "win32"
+            )
+    return False
+
+def _course_progress(cid: int) -> dict[str, Any] | None:
+    """Прогресс курса из DiSpace (кэш в сессии пользователя на 10 минут)."""
+    if not dispace_api:
+        return None
+    cache = st.session_state.setdefault("course_progress_cache", {})
+    hit = cache.get(cid)
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    try:
+        ov = dispace_api.get_course_overview(int(cid))
+    except Exception:
+        ov = None
+    cache[cid] = (time.time(), ov)
+    return ov
+
+
 with st.sidebar:
     st.title("🎓 DIBot")
     st.caption("Учебный ИИ-ассистент студента НГТУ")
@@ -641,9 +752,9 @@ with st.sidebar:
             st.caption(f"⚡ В памяти: `{item['name']}` ({item['size_gb']} ГБ)")
 
     if dispace_api:
-        st.success("DiSpace НГТУ: сессия активна")
+        st.success(f"DiSpace НГТУ: вы вошли (ID `{_current_user['id'] if _current_user else '—'}`)")
     else:
-        st.warning("DiSpace НГТУ: нужен вход через браузер")
+        st.warning("👤 Гостевой режим: войдите в DiSpace, чтобы пользоваться моделями и сохранять историю чатов")
 
     st.divider()
     st.markdown("**Параметры чата**")
@@ -670,6 +781,11 @@ with st.sidebar:
     st.divider()
     _init_chat_sessions()
     st.markdown("**🗂️ История чатов**")
+    st.caption(
+        "Сохраняется за вашим аккаунтом DiSpace и доступна на любом устройстве после входа."
+        if IS_AUTHORIZED
+        else "Гость: история не сохраняется и пропадёт при закрытии вкладки."
+    )
     ch_col1, ch_col2 = st.columns([1, 1])
     with ch_col1:
         if st.button("➕ Новый чат", width="stretch", type="primary"):
@@ -784,8 +900,14 @@ with tabs[0]:
                     render_assistant_turn(turn)
 
     # Поле ввода чата с прикреплением фото, видео и документов в любых кодировках
+    if not IS_AUTHORIZED:
+        require_auth("Чат с моделью", "chat")
+        picked_suggestion = None
     chat_submission = st.chat_input(
-        "Напиши вопрос, задачу или прикрепи фото, видео, PDF/DOCX/TXT…",
+        "Напиши вопрос, задачу или прикрепи фото, видео, PDF/DOCX/TXT…"
+        if IS_AUTHORIZED
+        else "🔒 Войдите в DiSpace, чтобы задать вопрос модели",
+        disabled=not IS_AUTHORIZED,
         accept_file="multiple",
         file_type=[
             "png", "jpg", "jpeg", "webp", "gif", "bmp",
@@ -1006,14 +1128,21 @@ with tabs[1]:
                     cid = c["id"]
                     c_title = c["title"]
                     disc_badge = f" · дисциплина: **{c['discipline']}**" if c.get("discipline") else ""
+                    c_prog = _course_progress(cid)
+                    if c_prog:
+                        p_done, p_tot = c_prog.get("passed_themes", 0), c_prog.get("total_themes", 0)
+                        p_icon = "✅" if p_tot and p_done >= p_tot else "⏳"
+                        prog_summary = f" · {p_icon} тем пройдено: `{p_done}/{p_tot}`"
+                    else:
+                        prog_summary = ""
                     already_in_store = (
                         len(store.list_sources(c.get("discipline") or c_title)) > 0
                         or len(store.list_sources(c_title)) > 0
                     )
-                    status_icon = "✅ В базе материалов" if already_in_store else "📥 Ещё не скачан в базу"
+                    status_icon = "📚 В базе" if already_in_store else "📥 Не скачан"
 
                     with st.container(border=True):
-                        st.markdown(f"**#{cid} — {c_title}** ({status_icon}){disc_badge}")
+                        st.markdown(f"**#{cid} — {c_title}** ({status_icon}){disc_badge}{prog_summary}")
                         st.caption(f"Ссылка: {c['url']}")
 
                         b_col1, b_col2 = st.columns([1, 1])
@@ -1731,22 +1860,81 @@ with tabs[2]:
     if not store.sources:
         st.info("База материалов пуста. Скачай курс на вкладке «🎓 DiSpace НГТУ» или загрузи файл выше.")
     else:
+        import re as _re_mat
+
+        def _course_progress(cid: int) -> dict[str, Any] | None:
+            """Прогресс курса из DiSpace (кэш в сессии пользователя на 10 минут)."""
+            if not dispace_api:
+                return None
+            cache = st.session_state.setdefault("course_progress_cache", {})
+            hit = cache.get(cid)
+            if hit and time.time() - hit[0] < 600:
+                return hit[1]
+            try:
+                ov = dispace_api.get_course_overview(int(cid))
+            except Exception:
+                ov = None
+            cache[cid] = (time.time(), ov)
+            return ov
+
+        mat_hdr1, mat_hdr2 = st.columns([4, 1])
+        with mat_hdr1:
+            if dispace_api:
+                st.caption("Отметки: ✅ пройдено · ⏳ в процессе · 🔓 доступно, не пройдено · 🔒 закрыто · 📎 файл/методичка")
+            else:
+                st.caption("Войдите в DiSpace, чтобы видеть отметки о прохождении тем.")
+        with mat_hdr2:
+            if dispace_api and st.button("🔄 Обновить прогресс", key="refresh_progress", width="stretch"):
+                st.session_state["course_progress_cache"] = {}
+                st.rerun()
+
         for course_name in store.list_courses():
             course_sources = store.list_sources(course_name)
             total_course_chars = sum(s.chars for s in course_sources)
             total_course_chunks = sum(len(s.chunk_ids) for s in course_sources)
+
+            # Статусы тем по ссылкам вида /course/<cid>/<tid>
+            theme_status: dict[tuple[int, int], dict[str, Any]] = {}
+            course_ids = sorted(
+                {
+                    int(m.group(1))
+                    for s in course_sources
+                    if s.url and (m := _re_mat.search(r"/course/(\d+)", s.url))
+                }
+            )
+            progress_bits: list[str] = []
+            for cid in course_ids:
+                ov = _course_progress(cid)
+                if not ov:
+                    continue
+                for mod in ov.get("modules") or []:
+                    for th in mod.get("themes") or []:
+                        theme_status[(cid, int(th["id"]))] = th
+                done, total = ov.get("passed_themes", 0), ov.get("total_themes", 0)
+                icon = "✅" if total and done >= total else "⏳"
+                progress_bits.append(f"{icon} пройдено тем {done}/{total}")
+            progress_str = (" · " + " · ".join(progress_bits)) if progress_bits else ""
+
             with st.expander(
-                f"📁 {course_name} — {len(course_sources)} ист. · {total_course_chunks} фр. · {total_course_chars:,} симв.".replace(
+                f"📁 {course_name}{progress_str} — {len(course_sources)} ист. · {total_course_chunks} фр. · {total_course_chars:,} симв.".replace(
                     ",", " "
                 ),
                 expanded=True,
             ):
                 for source in course_sources:
+                    m_th = _re_mat.search(r"/course/(\d+)/(\d+)", source.url or "")
+                    th_info = theme_status.get((int(m_th.group(1)), int(m_th.group(2)))) if m_th else None
+                    if th_info:
+                        src_badge = th_info.get("status_badge", "").split(" (")[0] + " · "
+                    elif source.url and not m_th and "/course/" not in source.url:
+                        src_badge = "📎 "
+                    else:
+                        src_badge = ""
                     with st.container(border=True):
                         cols = st.columns([4, 1, 1, 1])
                         with cols[0]:
                             st.markdown(
-                                f"**{source.title}** — `{source.chars:,}` симв., `{len(source.chunk_ids)}` фр.".replace(
+                                f"{src_badge}**{source.title}** — `{source.chars:,}` симв., `{len(source.chunk_ids)}` фр.".replace(
                                     ",", " "
                                 )
                             )
@@ -1772,9 +1960,10 @@ with tabs[2]:
                                 st.rerun()
 
                         if st.session_state.get(f"prev_toggle_{source.id}", False):
-                            full_text = store.get_source_text(source.id)
+                            full_text = clean_pdf_artifacts(store.get_source_text(source.id))
                             page_size = 8000
-                            total_pages = max(1, (len(full_text) + page_size - 1) // page_size)
+                            mat_pages = paginate_markdown(full_text, page_size=page_size)
+                            total_pages = len(mat_pages)
                             page_key = f"mat_page_{source.id}"
                             cur_page = int(st.session_state.get(page_key, 1))
                             cur_page = max(1, min(cur_page, total_pages))
@@ -1821,9 +2010,7 @@ with tabs[2]:
                             if show_all_pages:
                                 slice_text = full_text
                             else:
-                                start_idx = (cur_page - 1) * page_size
-                                end_idx = min(len(full_text), cur_page * page_size)
-                                slice_text = full_text[start_idx:end_idx]
+                                slice_text = mat_pages[cur_page - 1]
 
                             if view_mode.startswith("📐"):
                                 with st.container(border=True):
@@ -1849,11 +2036,7 @@ with tabs[2]:
                                         st.session_state[page_key] = cur_page - 1
                                         st.rerun()
                                 with b_nav2:
-                                    st.caption(
-                                        f"Показаны символы {(cur_page - 1) * page_size + 1:,}–{min(len(full_text), cur_page * page_size):,} из {len(full_text):,} (стр. {cur_page}/{total_pages})".replace(
-                                            ",", " "
-                                        )
-                                    )
+                                    st.caption(f"Страница {cur_page} из {total_pages} · всего {len(full_text):,} симв.".replace(",", " "))
                                 with b_nav3:
                                     if st.button(
                                         "Следующая страница ➡️",
@@ -1898,7 +2081,7 @@ with tabs[3]:
 
             note_path = store.notes_dir / slugify(selected_course) / f"{slugify(selected.title)}.md"
 
-            if rebuild:
+            if rebuild and require_auth("Сборка конспекта моделью", "notes"):
                 builder = NoteBuilder(get_tutor().llm, store)
                 progress = st.progress(0.0, text="Готовлю фрагменты…")
                 live_note_box = st.empty()
@@ -1999,21 +2182,21 @@ with tabs[4]:
             )
         generate = st.form_submit_button("⚡ Сгенерировать вариант (в реальном времени)", type="primary", width="stretch")
 
-    if generate and topic.strip():
+    if generate and topic.strip() and require_auth("Генерация заданий моделью", "practice"):
         stream_status = st.empty()
         stream_preview = st.empty()
         _last_pr_ui = [0.0]
 
-        def _on_practice_stream(thinking_part: str, content_part: str) -> None:
+        def _on_practice_stream(kind: str, text_so_far: str, model_name: str) -> None:
             now = time.perf_counter()
             if now - _last_pr_ui[0] < 0.08:
                 return
             _last_pr_ui[0] = now
-            if content_part.strip():
-                stream_status.caption("✍️ Модель генерирует условия и тетрадные решения в реальном времени…")
-                stream_preview.code(content_part[-1600:] + " ▌", language="json")
-            elif thinking_part.strip():
-                stream_status.caption(f"💭 Размышления модели ({len(thinking_part)} симв.)…")
+            if kind == "content" and text_so_far.strip():
+                stream_status.caption(f"✍️ `{model_name}` генерирует условия и решения в реальном времени…")
+                stream_preview.code(text_so_far[-1600:] + " ▌", language="json")
+            elif kind == "thinking":
+                stream_status.caption(f"💭 `{model_name}` размышляет ({len(text_so_far)} симв.)…")
 
         try:
             tasks, reports = get_tutor().practice(
@@ -2080,51 +2263,35 @@ with tabs[4]:
                     )
 
                 prac_sol_key = f"prac_nb_sol_{i}"
-                if check_prac and user_prac_ans.strip():
+                want_check = check_prac and user_prac_ans.strip()
+                if (want_check or notebook_prac) and require_auth("Решение с моделью", f"prac_{i}"):
                     live_p_box = st.empty()
                     _last_p_t = [0.0]
 
-                    def _on_p_chk(thinking: str, content: str) -> None:
+                    def _on_p_stream(kind: str, text_so_far: str, model_name: str) -> None:
                         now = time.perf_counter()
-                        if now - _last_p_t[0] >= 0.08 and content.strip():
+                        if kind == "content" and now - _last_p_t[0] >= 0.08 and text_so_far.strip():
                             _last_p_t[0] = now
-                            live_p_box.markdown(format_math_markdown(content) + " ▌")
+                            live_p_box.markdown(format_math_markdown(text_so_far) + " ▌")
 
-                    res_chk = get_tutor().solve_course_assignment(
-                        question_title=f"Тренажёр — Задание {i} ({p_topic})",
-                        question_text=task_item["statement"],
-                        course_name=p_selected_course,
-                        student_answer=user_prac_ans.strip(),
-                        mode="check",
-                        on_stream=_on_p_chk,
-                    )
-                    live_p_box.empty()
-                    st.session_state[prac_sol_key] = res_chk
-
-                if notebook_prac:
-                    live_p_box = st.empty()
-                    _last_p_t = [0.0]
-
-                    def _on_p_nb(thinking: str, content: str) -> None:
-                        now = time.perf_counter()
-                        if now - _last_p_t[0] >= 0.08 and content.strip():
-                            _last_p_t[0] = now
-                            live_p_box.markdown(format_math_markdown(content) + " ▌")
-
-                    res_nb = get_tutor().solve_course_assignment(
-                        question_title=f"Тренажёр — Задание {i} ({p_topic})",
-                        question_text=task_item["statement"],
-                        course_name=p_selected_course,
-                        mode="solve",
-                        on_stream=_on_p_nb,
-                    )
-                    live_p_box.empty()
-                    st.session_state[prac_sol_key] = res_nb
+                    try:
+                        res_p = get_tutor().solve_course_assignment(
+                            question_text=task_item["statement"],
+                            theme_theory_text="",
+                            course_name=p_selected_course,
+                            student_attempt=user_prac_ans.strip() if want_check else "",
+                            on_stream=_on_p_stream,
+                        )
+                        st.session_state[prac_sol_key] = res_p
+                    except LLMError as exc:
+                        st.error(f"Модель недоступна: {exc}")
+                    finally:
+                        live_p_box.empty()
 
                 if st.session_state.get(prac_sol_key):
                     sol_turn = st.session_state[prac_sol_key]
                     with st.container(border=True):
-                        render_rich_content(sol_turn.answer)
+                        render_rich_content(getattr(sol_turn, "text", "") or "")
 
                 with st.expander("Показать краткое эталонное решение и ответ из генератора"):
                     render_rich_content(f"**Ответ:** {task_item.get('answer') or '—'}")

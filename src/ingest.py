@@ -162,7 +162,35 @@ def fix_mojibake_and_tex(text: str) -> str:
     for pat, replacement in _SPACED_WORDS.items():
         text = re.sub(pat, replacement, text, flags=re.IGNORECASE)
 
+    text = clean_pdf_artifacts(text)
     return format_math_markdown(text)
+
+
+def paginate_markdown(text: str, page_size: int = 8000) -> list[str]:
+    """Разбить текст на страницы по границам абзацев, не разрывая формулы $$...$$ и блоки кода."""
+    if not text:
+        return [""]
+    paragraphs = text.split("\n\n")
+    pages: list[str] = []
+    buf: list[str] = []
+    buf_len = 0
+    open_display = False
+    open_code = False
+    for para in paragraphs:
+        buf.append(para)
+        buf_len += len(para) + 2
+        if para.count("$$") % 2 == 1:
+            open_display = not open_display
+        if para.count("```") % 2 == 1:
+            open_code = not open_code
+        if buf_len >= page_size and not open_display and not open_code:
+            pages.append("\n\n".join(buf).strip())
+            buf, buf_len = [], 0
+    if buf:
+        tail = "\n\n".join(buf).strip()
+        if tail:
+            pages.append(tail)
+    return pages or [""]
 
 
 def repair_latex_control_chars(text: str) -> str:
@@ -175,12 +203,40 @@ def repair_latex_control_chars(text: str) -> str:
     return s
 
 
+_PDF_ARROW_LINE = re.compile(r"^[\s\"!?#%'&|<>^~`Hj]{1,24}$")
+
+
+def clean_pdf_artifacts(text: str) -> str:
+    """Убрать мусор от TeX-схем в PDF (стрелки «"», «!», «?», «HHHH j#», «'&», «%») и склеить «Г лава» -> «Глава»."""
+    if not text:
+        return ""
+    out_lines: list[str] = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        # строки, состоящие только из символов-стрелок псевдографики TeX-схем
+        if s and _PDF_ARROW_LINE.match(s):
+            continue
+        out_lines.append(ln)
+    text = "\n".join(out_lines)
+    text = re.sub(r"\bГ\s+лава\b", "Глава", text)
+    return text
+
+
+def _merge_split_left_right(text: str) -> str:
+    """Склеить формулы, разорванные при импорте: «$y=\\left\\{ $$\\begin{matrix}..\\end{matrix}$$ \\right.$»."""
+    pattern = re.compile(
+        r"(?<!\$)\$(?!\$)([^$\n]*\\left[^$\n]*?)\s*\$\$\s*(\\begin\{([a-zA-Z*]+)\}[\s\S]*?\\end\{\3\})\s*\$\$\s*(\\right[^$\n]*?)\$(?!\$)"
+    )
+    return pattern.sub(lambda m: f"\n\n$$\n{m.group(1).strip()}{m.group(2).strip()}{m.group(4).strip()}\n$$\n\n", text)
+
+
 def format_math_markdown(text: str) -> str:
     """Нормализовать математические формулы LaTeX для корректного рендеринга KaTeX в Streamlit Markdown."""
     if not text:
         return ""
 
     text = repair_latex_control_chars(text)
+    text = _merge_split_left_right(text)
 
     # 1. Заменяем блочные \[ ... \] на $$ ... $$
     def _repl_display_bracket(m: re.Match) -> str:
