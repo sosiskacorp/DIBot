@@ -94,6 +94,10 @@ class LLMClient:
         config_path: str | Path | None = None,
         base_url: str | None = None,
         timeout: float | None = None,
+        ollama_api_key: str | None = None,
+        cloud_api_key: str | None = None,
+        cloud_base_url: str | None = None,
+        cloud_model: str | None = None,
     ):
         config = self._load_config(config_path)
         self.config = config
@@ -102,7 +106,8 @@ class LLMClient:
         env_ollama = os.environ.get("OLLAMA_BASE_URL", "").strip()
         self.base_url = (base_url or env_ollama or ollama_cfg.get("base_url") or "http://localhost:11434").rstrip("/")
         self.ollama_api_key = (
-            os.environ.get("OLLAMA_API_KEY", "").strip()
+            (ollama_api_key or "").strip()
+            or os.environ.get("OLLAMA_API_KEY", "").strip()
             or os.environ.get("DIBOT_GATEWAY_TOKEN", "").strip()
             or str(ollama_cfg.get("api_key") or "").strip()
         )
@@ -110,13 +115,15 @@ class LLMClient:
         self.keep_alive = ollama_cfg.get("keep_alive", "5m")
         self._cache_ttl = float(ollama_cfg.get("model_cache_ttl") or 30)
 
-        self.cloud_api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        self.cloud_api_key = (cloud_api_key if cloud_api_key is not None else os.environ.get("OPENAI_API_KEY", "")).strip()
         self.cloud_base_url = (
-            os.environ.get("OPENAI_BASE_URL", "").strip()
+            (cloud_base_url or "").strip()
+            or os.environ.get("OPENAI_BASE_URL", "").strip()
             or "https://api.groq.com/openai/v1"
         ).rstrip("/")
         self.cloud_model = (
-            os.environ.get("OPENAI_MODEL", "").strip()
+            (cloud_model or "").strip()
+            or os.environ.get("OPENAI_MODEL", "").strip()
             or "llama-3.3-70b-versatile"
         )
 

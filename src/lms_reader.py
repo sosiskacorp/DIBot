@@ -183,11 +183,15 @@ def _session_bootstrap_js(
     )
 
 
-def _fetch_token_from_remote_gateway() -> str | None:
+def _fetch_token_from_remote_gateway(
+    gateway_url: str | None = None,
+    gateway_key: str | None = None,
+) -> str | None:
     """Если приложение запущено в облаке и подключено к шлюзу домашнего ПК, запросить токен DiSpace у шлюза."""
-    gw_url = os.environ.get("OLLAMA_BASE_URL", "").strip().rstrip("/")
+    gw_url = (gateway_url or os.environ.get("OLLAMA_BASE_URL", "")).strip().rstrip("/")
     gw_key = (
-        os.environ.get("OLLAMA_API_KEY", "").strip()
+        (gateway_key or "").strip()
+        or os.environ.get("OLLAMA_API_KEY", "").strip()
         or os.environ.get("DIBOT_GATEWAY_TOKEN", "").strip()
     )
     if not gw_url or not gw_key or "localhost" in gw_url or "127.0.0.1" in gw_url:
@@ -201,19 +205,25 @@ def _fetch_token_from_remote_gateway() -> str | None:
         if resp.ok:
             tok = str((resp.json() or {}).get("token") or "").strip().strip('"')
             if tok:
-                os.environ["DISPACE_AUTH_TOKEN"] = tok
                 return tok
     except Exception:
         pass
     return None
 
 
-def load_auth_token(state_file: Path = DEFAULT_STATE) -> str | None:
-    """Извлечь JWT-токен DiSpace (из DISPACE_AUTH_TOKEN, browser_state.json или защищённого шлюза домашнего ПК)."""
-    env_tok = os.environ.get("DISPACE_AUTH_TOKEN", "").strip().strip('"')
-    if env_tok:
-        return env_tok
-    if state_file.exists():
+def load_auth_token(
+    state_file: Path = DEFAULT_STATE,
+    *,
+    gateway_url: str | None = None,
+    gateway_key: str | None = None,
+    explicit_token: str | None = None,
+    allow_local_files: bool = True,
+) -> str | None:
+    """Извлечь JWT-токен DiSpace изолированно для текущей сессии (без глобальной утечки в os.environ)."""
+    if explicit_token and explicit_token.strip():
+        return explicit_token.strip().strip('"')
+
+    if allow_local_files and state_file.exists():
         try:
             state = json.loads(state_file.read_text(encoding="utf-8"))
             for origin_entry in state.get("origins") or []:
@@ -237,11 +247,22 @@ def load_auth_token(state_file: Path = DEFAULT_STATE) -> str | None:
         except (OSError, json.JSONDecodeError):
             pass
 
-    dec_tok = load_encrypted_dispace_token()
-    if dec_tok:
-        return dec_tok
+    if gateway_key:
+        dec_tok = load_encrypted_dispace_token(gateway_key=gateway_key)
+        if dec_tok:
+            return dec_tok
+        return _fetch_token_from_remote_gateway(gateway_url=gateway_url, gateway_key=gateway_key)
 
-    return _fetch_token_from_remote_gateway()
+    if allow_local_files:
+        env_tok = os.environ.get("DISPACE_AUTH_TOKEN", "").strip().strip('"')
+        if env_tok:
+            return env_tok
+        dec_tok = load_encrypted_dispace_token()
+        if dec_tok:
+            return dec_tok
+        return _fetch_token_from_remote_gateway()
+
+    return None
 
 
 @dataclass
@@ -1274,15 +1295,26 @@ def get_api_client(
     state_file: Path = DEFAULT_STATE,
     profile_dir: Path = DEFAULT_PROFILE,
     auto_refresh: bool = True,
+    *,
+    gateway_url: str | None = None,
+    gateway_key: str | None = None,
+    explicit_token: str | None = None,
+    allow_local_files: bool = True,
 ) -> DiSpaceAPI | None:
-    """Получить готовый REST-клиент DiSpace (с автообновлением токена через SSO при необходимости)."""
-    token = load_auth_token(state_file)
+    """Получить готовый REST-клиент DiSpace (изолированно для сессии в облаке или локально на ПК)."""
+    token = load_auth_token(
+        state_file,
+        gateway_url=gateway_url,
+        gateway_key=gateway_key,
+        explicit_token=explicit_token,
+        allow_local_files=allow_local_files,
+    )
     if token:
         api = DiSpaceAPI(token)
         if api.verify_token():
             return api
 
-    if not auto_refresh:
+    if not auto_refresh or not allow_local_files:
         return None
 
     # Попытка тихого обновления токена через сохранённый профиль браузера

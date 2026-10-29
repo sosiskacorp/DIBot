@@ -25,22 +25,6 @@ from typing import Any
 import requests
 import streamlit as st
 
-# Поддержка st.secrets для бесплатного деплоя в Streamlit Community Cloud
-try:
-    for _sec_key in (
-        "OLLAMA_BASE_URL",
-        "OLLAMA_API_KEY",
-        "DIBOT_GATEWAY_TOKEN",
-        "OPENAI_API_KEY",
-        "OPENAI_BASE_URL",
-        "OPENAI_MODEL",
-        "DISPACE_AUTH_TOKEN",
-    ):
-        if _sec_key in st.secrets and not os.environ.get(_sec_key):
-            os.environ[_sec_key] = str(st.secrets[_sec_key])
-except Exception:
-    pass
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -59,7 +43,7 @@ if not hasattr(_materials_mod.MaterialStore, "reload") or not hasattr(
     importlib.reload(_lms_reader_mod)
     importlib.reload(_tutor_mod)
 
-from llm_client import LLMError  # noqa: E402
+from llm_client import LLMClient, LLMError  # noqa: E402
 from lms_reader import (  # noqa: E402
     CATALOG_URL,
     EDUCATION_URL,
@@ -110,7 +94,43 @@ def _push_git_info_to_client() -> None:
 _push_git_info_to_client()
 
 
-# --------------------------------------------------------------- ресурсы
+# --------------------------------------------------------------- ресурсы и изоляция сессий
+
+# Определяем, запущено ли приложение локально на домашнем ПК пользователя
+IS_LOCAL_PC = (
+    (PROJECT_ROOT / "data" / "browser_state.json").exists()
+    or (PROJECT_ROOT / "data" / "gateway_token.txt").exists()
+)
+
+
+def _default_gateway_url() -> str:
+    """Публичный URL туннеля можно подставить по умолчанию (сам по себе без секретного ключа он закрыт)."""
+    try:
+        if "OLLAMA_BASE_URL" in st.secrets:
+            return str(st.secrets["OLLAMA_BASE_URL"]).strip().rstrip("/")
+    except Exception:
+        pass
+    return "http://localhost:11434" if IS_LOCAL_PC else ""
+
+
+def _init_session_credentials() -> None:
+    """Хранить все ключи СТРОГО в st.session_state текущей вкладки/устройства, а НЕ в глобальном os.environ!"""
+    if "session_ollama_url" not in st.session_state:
+        st.session_state["session_ollama_url"] = _default_gateway_url()
+    if "session_ollama_key" not in st.session_state:
+        # На локальном ПК ключ не нужен, а в облаке каждое устройство ОБЯЗАНО ввести ключ в своей сессии!
+        st.session_state["session_ollama_key"] = ""
+    if "session_cloud_key" not in st.session_state:
+        st.session_state["session_cloud_key"] = ""
+    if "session_cloud_url" not in st.session_state:
+        st.session_state["session_cloud_url"] = "https://api.groq.com/openai/v1"
+    if "session_cloud_model" not in st.session_state:
+        st.session_state["session_cloud_model"] = "llama-3.3-70b-versatile"
+    if "session_dispace_token" not in st.session_state:
+        st.session_state["session_dispace_token"] = ""
+
+
+_init_session_credentials()
 
 
 @st.cache_resource(show_spinner=False)
@@ -118,9 +138,33 @@ def get_store() -> MaterialStore:
     return MaterialStore()
 
 
-@st.cache_resource(show_spinner=False)
 def get_tutor() -> Tutor:
-    return Tutor(store=get_store())
+    """Создать Tutor строго с ключами текущей пользовательской сессии (без кэширования между устройствами!)."""
+    base_url = st.session_state.get("session_ollama_url") or (
+        "http://localhost:11434" if IS_LOCAL_PC else "https://127.0.0.1:11435"
+    )
+    llm = LLMClient(
+        base_url=base_url,
+        ollama_api_key=st.session_state.get("session_ollama_key", ""),
+        cloud_api_key=st.session_state.get("session_cloud_key", ""),
+        cloud_base_url=st.session_state.get("session_cloud_url", ""),
+        cloud_model=st.session_state.get("session_cloud_model", ""),
+    )
+    return Tutor(llm=llm, store=get_store())
+
+
+get_tutor.clear = lambda: None  # type: ignore[attr-defined]
+
+
+def get_session_dispace_api(auto_refresh: bool = False):
+    """Получить клиент DiSpace только для авторизованной сессии текущего устройства."""
+    return get_api_client(
+        auto_refresh=auto_refresh and IS_LOCAL_PC,
+        gateway_url=st.session_state.get("session_ollama_url", ""),
+        gateway_key=st.session_state.get("session_ollama_key", ""),
+        explicit_token=st.session_state.get("session_dispace_token", ""),
+        allow_local_files=IS_LOCAL_PC,
+    )
 
 
 def sync_materials() -> MaterialStore:
@@ -132,7 +176,6 @@ def sync_materials() -> MaterialStore:
         importlib.reload(_lms_reader_mod)
         importlib.reload(_tutor_mod)
         get_store.clear()
-        get_tutor.clear()
         store = get_store()
     if hasattr(store, "reload"):
         store.reload()
@@ -142,12 +185,23 @@ def sync_materials() -> MaterialStore:
 
 
 def ollama_status() -> dict[str, Any]:
-    """Быстрый статус сервера Ollama (локального или через защищённый HTTPS-шлюз)."""
-    base_url = (os.environ.get("OLLAMA_BASE_URL", "").strip() or "http://localhost:11434").rstrip("/")
-    api_key = (
-        os.environ.get("OLLAMA_API_KEY", "").strip()
-        or os.environ.get("DIBOT_GATEWAY_TOKEN", "").strip()
-    )
+    """Быстрый статус сервера Ollama строго для текущей сессии устройства."""
+    base_url = (st.session_state.get("session_ollama_url") or "").strip().rstrip("/")
+    api_key = (st.session_state.get("session_ollama_key") or "").strip()
+
+    if not IS_LOCAL_PC and not api_key:
+        return {
+            "ok": False,
+            "base_url": base_url,
+            "error": "Требуется ввод секретного токена на этом устройстве",
+            "models": [],
+            "loaded": [],
+        }
+    if not base_url:
+        base_url = "http://localhost:11434" if IS_LOCAL_PC else ""
+    if not base_url:
+        return {"ok": False, "base_url": "", "error": "Не указан URL шлюза", "models": [], "loaded": []}
+
     headers: dict[str, str] = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -236,7 +290,7 @@ def render_assistant_turn(turn: dict[str, Any]) -> None:
 store = sync_materials()
 stats = store.stats()
 status = ollama_status()
-dispace_api = get_api_client(auto_refresh=False)
+dispace_api = get_session_dispace_api(auto_refresh=False)
 
 with st.sidebar:
     st.title("🎓 DIBot")
@@ -251,55 +305,59 @@ with st.sidebar:
     if status["ok"]:
         conn_label = "Удалённый шлюз RTX 4060" if status.get("is_remote") else "Локальный Ollama"
         st.success(f"{conn_label}: {len(status['models'])} моделей готово")
-    elif os.environ.get("OPENAI_API_KEY"):
-        st.success(f"Облачный ИИ: {os.environ.get('OPENAI_MODEL', 'llama-3.3-70b-versatile')}")
+    elif st.session_state.get("session_cloud_key"):
+        st.success(f"Облачный ИИ: {st.session_state.get('session_cloud_model', 'llama-3.3-70b-versatile')}")
     else:
-        st.warning("Модели не подключены (укажи адрес шлюза RTX 4060 ниже)")
+        st.warning("🔒 Сессия не авторизована (введи токен доступа ниже)")
 
-    with st.expander("🔒 Подключение к своей RTX 4060 с другого устройства", expanded=not status["ok"]):
+    with st.expander("🔒 Доступ к своей RTX 4060 (только для этого устройства)", expanded=not status["ok"]):
         st.caption(
-            "Введи HTTPS-ссылку и секретный токен из вкладки «⚙️ Модели» на домашнем ПК "
-            "(или пропиши их один раз в Secrets на Streamlit Cloud)."
+            "Ключ сохраняется **только в памяти текущей вкладки браузера** (`st.session_state`) "
+            "и недоступен другим посетителям сайта."
         )
         remote_ollama_url = st.text_input(
             "HTTPS URL шлюза (OLLAMA_BASE_URL)",
-            value=os.environ.get("OLLAMA_BASE_URL", ""),
+            value=st.session_state.get("session_ollama_url", ""),
             placeholder="https://xxxx-xxxx.trycloudflare.com",
         )
         remote_ollama_key = st.text_input(
             "Секретный токен (OLLAMA_API_KEY)",
-            value=os.environ.get("OLLAMA_API_KEY", ""),
+            value=st.session_state.get("session_ollama_key", ""),
             type="password",
             placeholder="dibot_sk_...",
         )
-        if st.button("Подключить локальные модели", type="primary", width="stretch"):
-            if remote_ollama_url.strip():
-                os.environ["OLLAMA_BASE_URL"] = remote_ollama_url.strip().rstrip("/")
-            if remote_ollama_key.strip():
-                os.environ["OLLAMA_API_KEY"] = remote_ollama_key.strip()
-            get_tutor.clear()
+        if st.button("Разблокировать на этом устройстве", type="primary", width="stretch"):
+            st.session_state["session_ollama_url"] = remote_ollama_url.strip().rstrip("/")
+            st.session_state["session_ollama_key"] = remote_ollama_key.strip()
             st.rerun()
+
+        if st.session_state.get("session_ollama_key") or st.session_state.get("session_cloud_key"):
+            if st.button("🔒 Выйти на этом устройстве", width="stretch"):
+                st.session_state["session_ollama_key"] = ""
+                st.session_state["session_cloud_key"] = ""
+                st.session_state["session_dispace_token"] = ""
+                st.rerun()
 
         st.divider()
         st.caption("Резервный облачный API (если домашний ПК выключен):")
         cloud_key = st.text_input(
             "API-ключ (Groq / OpenRouter)",
+            value=st.session_state.get("session_cloud_key", ""),
             type="password",
             placeholder="gsk_... или sk-or-...",
         )
         cloud_url = st.text_input(
             "Base URL",
-            value=os.environ.get("OPENAI_BASE_URL", "https://api.groq.com/openai/v1"),
+            value=st.session_state.get("session_cloud_url", "https://api.groq.com/openai/v1"),
         )
         cloud_mod = st.text_input(
             "Модель",
-            value=os.environ.get("OPENAI_MODEL", "llama-3.3-70b-versatile"),
+            value=st.session_state.get("session_cloud_model", "llama-3.3-70b-versatile"),
         )
         if st.button("Сохранить резервный API", width="stretch") and cloud_key.strip():
-            os.environ["OPENAI_API_KEY"] = cloud_key.strip()
-            os.environ["OPENAI_BASE_URL"] = cloud_url.strip()
-            os.environ["OPENAI_MODEL"] = cloud_mod.strip()
-            get_tutor.clear()
+            st.session_state["session_cloud_key"] = cloud_key.strip()
+            st.session_state["session_cloud_url"] = cloud_url.strip()
+            st.session_state["session_cloud_model"] = cloud_mod.strip()
             st.rerun()
 
     if status["loaded"]:
@@ -498,15 +556,14 @@ with tabs[1]:
     with top_c2:
         if st.button("🔄 Обновить / синхронизировать токен", width="stretch"):
             with st.spinner("Получаю токен DiSpace (через шлюз домашнего ПК или SSO)…"):
-                os.environ.pop("DISPACE_AUTH_TOKEN", None)
-                refreshed = get_api_client(auto_refresh=not _is_cloud_env)
+                refreshed = get_session_dispace_api(auto_refresh=not _is_cloud_env)
             if refreshed:
                 st.success("Токен DiSpace успешно синхронизирован!")
                 st.rerun()
             else:
                 st.warning(
-                    "Не удалось получить токен автоматически. Убедись, что на домашнем ПК запущен шлюз "
-                    "(OLLAMA_BASE_URL + OLLAMA_API_KEY) или вставь DISPACE_AUTH_TOKEN ниже."
+                    "Для доступа к DiSpace на этом устройстве сначала разблокируй сессию секретным токеном "
+                    "в боковой панели слева (`dibot_sk_...`) или вставь JWT-токен вручную."
                 )
     with top_c3:
         if not _is_cloud_env:
@@ -520,11 +577,11 @@ with tabs[1]:
             with st.popover("🔑 Ввести токен DiSpace", use_container_width=True):
                 manual_jwt = st.text_input(
                     "JWT-токен (authToken из localStorage DiSpace)",
-                    value=os.environ.get("DISPACE_AUTH_TOKEN", ""),
+                    value=st.session_state.get("session_dispace_token", ""),
                     type="password",
                 )
-                if st.button("Сохранить токен", type="primary", width="stretch") and manual_jwt.strip():
-                    os.environ["DISPACE_AUTH_TOKEN"] = manual_jwt.strip().strip('"')
+                if st.button("Сохранить в этой сессии", type="primary", width="stretch") and manual_jwt.strip():
+                    st.session_state["session_dispace_token"] = manual_jwt.strip().strip('"')
                     st.rerun()
 
     dispace_section = st.segmented_control(
@@ -1382,24 +1439,24 @@ with tabs[5]:
 
     with gw_col2:
         if gw_token:
-            st.markdown("**Готовый блок для `Settings → Secrets` в Streamlit Cloud:**")
+            st.markdown("**1. Секретный токен (вводить в боковой панели только на своих устройствах):**")
             st.caption(
-                "Скопируй и вставь это в настройках своего приложения на `share.streamlit.io` "
-                "(или введи в боковой панели на телефоне/ноутбуке):"
+                "Токен хранится изолированно в `st.session_state` конкретного браузера/устройства и "
+                "не передаётся другим посетителям сайта:"
             )
-            from lms_reader import load_auth_token
-
-            local_dispace_jwt = load_auth_token() or ""
+            st.code(gw_token, language="text")
+            st.markdown("**2. Для `Settings → Secrets` в Streamlit Cloud (только URL туннеля без ключа!):**")
+            st.caption(
+                "Укажи в `Secrets` только публичный URL туннеля, чтобы не вводить его вручную, "
+                "а секретный токен `dibot_sk_...` вводи только на своих устройствах:"
+            )
             secrets_toml = (
                 f'OLLAMA_BASE_URL = "{gw_public_url or "https://ЗАПУСТИ-ТУННЕЛЬ-СЛЕВА.trycloudflare.com"}"\n'
-                f'OLLAMA_API_KEY = "{gw_token}"\n'
             )
-            if local_dispace_jwt:
-                secrets_toml += f'DISPACE_AUTH_TOKEN = "{local_dispace_jwt}"\n'
             st.code(secrets_toml, language="toml")
         else:
             st.info(
-                "Нажми **«🚀 Запустить / перезапустить защищённый HTTPS-туннель»** слева — "
+                "Нажми **«🚀 Запустить / перезапустить защищённый HTTPS-туннель»** слева (на домашнем ПК) — "
                 "сгенерируется криптостойкий 256-битный токен `dibot_sk_...` и публичный HTTPS-адрес."
             )
 
