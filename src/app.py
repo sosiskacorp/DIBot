@@ -887,10 +887,11 @@ with tabs[0]:
             with st.chat_message(turn["role"]):
                 if turn["role"] == "user":
                     if turn.get("images"):
-                        img_cols = st.columns(min(len(turn["images"]), 3))
                         for idx, img_bytes in enumerate(turn["images"]):
-                            with img_cols[idx % len(img_cols)]:
-                                st.image(img_bytes, width=280)
+                            with st.container(border=True):
+                                st.image(img_bytes, use_container_width=True)
+                                with st.expander(f"🔍 Исходное разрешение фото #{idx+1} (1:1)", expanded=False):
+                                    st.image(img_bytes, use_container_width=False)
                     if turn.get("videos"):
                         for vid_bytes in turn["videos"]:
                             st.video(vid_bytes)
@@ -986,10 +987,11 @@ with tabs[0]:
         with chat_container:
             with st.chat_message("user"):
                 if attached_images:
-                    img_cols = st.columns(min(len(attached_images), 3))
                     for idx, img_bytes in enumerate(attached_images):
-                        with img_cols[idx % len(img_cols)]:
-                            st.image(img_bytes, width=280)
+                        with st.container(border=True):
+                            st.image(img_bytes, use_container_width=True)
+                            with st.expander(f"🔍 Исходное разрешение фото #{idx+1} (1:1)", expanded=False):
+                                st.image(img_bytes, use_container_width=False)
                 if attached_videos:
                     for vid_bytes in attached_videos:
                         st.video(vid_bytes)

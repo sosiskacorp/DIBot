@@ -68,6 +68,24 @@ def _is_meta_or_conversational(query: str) -> bool:
         return True
     return False
 
+
+def _is_generic_image_query(query: str) -> bool:
+    """Проверить, является ли текстовый запрос просто общей фразой о картинке без конкретных терминов."""
+    q = (query or "").strip().lower()
+    if not q:
+        return True
+    generic_words = (
+        "реши задачу", "реши задание", "с картинки", "с фото", "на фото",
+        "на картинке", "разбери фото", "помоги с фото", "помоги решить",
+        "что на картинке", "что на фото", "найди ответ", "реши тест",
+        "разбери и реши задание на изображении", "реши", "помоги",
+    )
+    clean = q
+    for g in generic_words:
+        clean = clean.replace(g, "")
+    clean = re.sub(r"[^\w\s]", "", clean).strip()
+    return len(clean) < 4
+
 PRACTICE_SYSTEM = """Ты составляешь тренировочные задания по учебной теме.
 
 Отвечай ТОЛЬКО JSON:
@@ -173,8 +191,92 @@ class Tutor:
         extracted_image_text = ""
         vision_model_used = ""
 
-        # Шаг 1: если прикреплены фото, распознаём текст и формулы через vision-модель (qwen3-vl)
+        # Шаг 1: если прикреплены фото, обрабатываем через vision-модель (qwen3-vl:8b)
         if images:
+            # Если не запрошен принудительный пересчёт через math (deepseek-r1) или code (qwen2.5-coder),
+            # запускаем прямое однопроходное зрение + решение задачи через qwen3-vl.
+            # Это исключает двойную выгрузку/загрузку 6-гигабайтных моделей в видеопамяти и ускоряет ответ в 3–4 раза!
+            if task not in ("math", "code"):
+                if on_stream is not None:
+                    try:
+                        on_stream("status", "👁️ Решаю задание с изображения в реальном времени (qwen3-vl)…", "qwen3-vl:8b")
+                    except Exception:
+                        pass
+
+                # Ищем контекст в материалах курса по тексту вопроса, если он есть
+                parts: list[str] = []
+                sources: list[str] = []
+                used = "фото"
+                if clean_question and not _is_meta_or_conversational(clean_question) and not _is_generic_image_query(clean_question):
+                    hits = self.store.search(clean_question, k=2, course=course, min_score=2.5)
+                    if hits:
+                        blocks, chars_used = [], 0
+                        for chunk, _score in hits:
+                            block = f"[{chunk.id}] «{chunk.title}», фр. {chunk.index + 1}\n{chunk.text}"
+                            if chars_used + len(block) > 2500:
+                                break
+                            blocks.append(block)
+                            chars_used += len(block)
+                            sources.append(f"{chunk.title} (фр. {chunk.index + 1})")
+                        if blocks:
+                            parts.append("ТЕОРЕТИЧЕСКИЙ КОНТЕКСТ ИЗ МАТЕРИАЛОВ:\n" + "\n\n---\n\n".join(blocks))
+                            used = "фото + материалы"
+
+                prompt_parts = []
+                if parts:
+                    prompt_parts.append("\n\n".join(parts))
+                prompt_parts.append(
+                    f"ВОПРОС / ЗАДАНИЕ:\n{clean_question}\n\n"
+                    "Реши задачу с прикреплённого изображения:\n"
+                    "1. Чётко выпиши условие и все предложенные варианты ответов.\n"
+                    "2. Подробно объясни теоретическую базу и формулы (в LaTeX: $...$ и $$...$$).\n"
+                    "3. Покажи тетрадный пошаговый ход решения.\n"
+                    "4. Отдельной строкой в конце запиши итоговый верный ответ (например, «Ответ: вариант 4»)."
+                )
+                user_content = "\n\n".join(prompt_parts)
+
+                messages: list[dict[str, str]] = [{"role": "system", "content": TUTOR_SYSTEM}]
+                if history:
+                    for m in history[-6:]:
+                        role = str(m.get("role") or "user")
+                        content = str(m.get("content") or "").strip()
+                        if role in ("user", "assistant") and content:
+                            messages.append({"role": role, "content": content})
+                messages.append({"role": "user", "content": user_content})
+
+                result: ChatResult = self.llm.chat(
+                    messages,
+                    task="vision",
+                    text_hint=clean_question,
+                    images=images,
+                    on_stream=on_stream,
+                )
+                answer_text = format_math_markdown(_strip_prompt_echo(result.text, TUTOR_SYSTEM))
+
+                report = None
+                if (verify if verify is not None else True) and answer_text:
+                    report = self.verifier.verify(
+                        problem=clean_question or answer_text[:200],
+                        solution=answer_text,
+                        solver_model=result.model,
+                        use_model=False,
+                    )
+
+                return Answer(
+                    question=clean_question,
+                    text=answer_text,
+                    task="vision",
+                    model=result.model,
+                    seconds=round(time.perf_counter() - started, 2),
+                    sources=_dedupe(sources),
+                    verification=report,
+                    context_used=used,
+                    thinking=result.thinking,
+                    extracted_image_text="",
+                )
+
+            # Двухпроходный режим (только если пользователь явно выбрал режим math или code):
+            # сначала распознаём текст через qwen3-vl с живой трансляцией, затем решаем выбранной моделью.
             if on_stream is not None:
                 try:
                     on_stream("status", "👁️ Распознаю формулы и текст с изображения (qwen3-vl)…", "qwen3-vl:8b")
@@ -192,6 +294,7 @@ class Tutor:
                 ],
                 task="vision",
                 images=images,
+                on_stream=on_stream,
             )
             extracted_image_text = vision_res.text.strip()
             vision_model_used = vision_res.model

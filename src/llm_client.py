@@ -237,9 +237,22 @@ class LLMClient:
         for candidate in chain:
             try:
                 self.require_model(candidate)
+                cand_messages = prepared
+                cand_spec = self.router.model_spec(candidate)
+                is_vision = cand_spec.get("role") == "vision" or "vl" in candidate.lower() or "vision" in candidate.lower()
+                if not is_vision and any("images" in m for m in prepared):
+                    cand_messages = []
+                    for m in prepared:
+                        m_copy = dict(m)
+                        if "images" in m_copy:
+                            del m_copy["images"]
+                            if "[Внимание: изображение" not in str(m_copy.get("content", "")):
+                                m_copy["content"] = "[Внимание: к сообщению прикреплено изображение, но резервная модель текстовая]\n" + str(m_copy.get("content", ""))
+                        cand_messages.append(m_copy)
+
                 result = self._post_chat(
                     model=candidate,
-                    messages=prepared,
+                    messages=cand_messages,
                     think=think,
                     options=merged_options,
                     json_format=json_format,
@@ -268,7 +281,11 @@ class LLMClient:
                 raise
             except requests.RequestException as exc:
                 last_error = exc
-                log.warning("Сбой запроса к %s: %s", candidate, exc)
+                err_detail = ""
+                if hasattr(exc, "response") and exc.response is not None:
+                    err_detail = f" (детали: {exc.response.text[:300]})"
+                log.warning("Сбой запроса к %s: %s%s", candidate, exc, err_detail)
+                print(f"[OLLAMA_ERROR] {candidate}: {exc}{err_detail}", flush=True)
                 continue
 
         if self.cloud_api_key:
@@ -404,7 +421,9 @@ class LLMClient:
                         raise ModelUnavailable(
                             f"Ollama не знает модель {model!r}: {_error_message(resp)}"
                         )
-                    resp.raise_for_status()
+                    if not resp.ok:
+                        err_msg = _error_message(resp)
+                        raise LLMError(f"Ollama HTTP {resp.status_code} ({model}): {err_msg}")
 
                     for raw_line in resp.iter_lines(chunk_size=1, decode_unicode=True):
                         if not raw_line:
@@ -454,11 +473,19 @@ class LLMClient:
                 time.sleep(1.5 * attempt)
 
         elapsed = time.perf_counter() - started
+        final_text = "".join(text_parts).strip()
+        final_thinking = "".join(think_parts).strip()
+        if not final_text and final_thinking:
+            cleaned = re.sub(r"^\s*<think>\s*", "", final_thinking, flags=re.IGNORECASE)
+            cleaned = re.sub(r"\s*</think>\s*$", "", cleaned, flags=re.IGNORECASE).strip()
+            final_text = cleaned
+            final_thinking = ""
+
         return ChatResult(
-            text="".join(text_parts).strip(),
+            text=final_text,
             model=resp_model,
             task=task,
-            thinking="".join(think_parts).strip(),
+            thinking=final_thinking,
             prompt_tokens=prompt_tokens,
             output_tokens=output_tokens,
             seconds=round(elapsed, 3),
