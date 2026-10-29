@@ -196,13 +196,7 @@ $\frac{{{n^2} + 3n + 4}}{{{n^2} - 5n + 1}} = \frac{{\left( {{n^2} - 5n + 1} \rig
 
 и вычислим предел с использованием второго замечательного предела:
 
-$\mathop {\lim }\limits_{n \to \infty } {\left( {\frac{{{n^2} + 3n + 4}}{{{n^2} - 5n + 1}}} \right)^{2n}}
-
-$$
-= \mathop {\lim }\limits_{n \to \infty } {\left( {1 + \frac{{8n + 3}}{{{n^2} - 5n + 1}}} \right)^{2n}}
-$$
-
-= \mathop {\lim }\limits_{n \to\infty } {\left[ {{{\left( {1 + \frac{{8n + 3}}{{{n^2} - 5n + 1}}} \right)}^{\frac{{{n^2} - 5n + 1}}{{8n + 3}}}}} \right]^{\frac{{2n\left( {8n + 3} \right)}}{{{n^2} - 5n + 1}}}} =$
+$\mathop {\lim }\limits_{n \to \infty } {\left( {\frac{{{n^2} + 3n + 4}}{{{n^2} - 5n + 1}}} \right)^{2n}} MATHBLOCK0 = \mathop {\lim }\limits_{n \to\infty } {\left[ {{{\left( {1 + \frac{{8n + 3}}{{{n^2} - 5n + 1}}} \right)}^{\frac{{{n^2} - 5n + 1}}{{8n + 3}}}}} \right]^{\frac{{2n\left( {8n + 3} \right)}}{{{n^2} - 5n + 1}}}} =$
 
 $= \mathop {\lim }\limits_{n \to \infty } {e^{\frac{{2n\left( {8n + 3} \right)}}{{{n^2} - 5n + 1}}}} = {e^{\mathop {\lim }\limits_{n \to \infty } \frac{{2n\left( {8n + 3} \right)}}{{{n^2} - 5n + 1}}}} = {e^{16}}$ ,
 
@@ -301,3 +295,25 @@ $\underbrace {\ln ^a n}_{\forall a} < \underbrace {n^b }_{\forall b>0} < \underb
 $\lim\limits_{n \to \infty }\frac{m}{b}= 0$,
 
 где $m$ – меньший элемент, $b$ – больший элемент.
+
+### ✏️ Практические задания по теме
+
+#### ✏️ Задание №1 (✅ пройдено)
+
+Найдите предел $\lim\limits_{n\to\infty}\left({\frac{{n-3}}{{n+2}}}\right)^{2n+1}$
+
+Варианты ответа:
+- $e$
+- $e^{-10}$
+- $e^{-1}$
+- $e^{10}$
+
+*Текущий ответ в DiSpace:* `$e^{-10}$`
+
+---
+
+#### ✏️ Задание №2 (✅ пройдено)
+
+Найдите предел $\lim\limits_{n\to\infty}\frac{2^n}{n^{20}}$
+
+*Текущий ответ в DiSpace:* `б`

@@ -867,6 +867,265 @@ class DiSpaceAPI:
     def get_block(self, block_id: int) -> dict[str, Any]:
         return self._get(f"api/v1/view/course/block/{block_id}")
 
+    def get_question_block_detail(self, question_id: int, course_id: int) -> dict[str, Any]:
+        """Получить условие, варианты ответов и статус практического задания (question block) внутри темы курса."""
+        raw: Any = None
+        try:
+            resp = self.session.get(f"{self.base_url}/api/v1/test/result/by_question/{question_id}", timeout=12)
+            if resp.status_code == 200:
+                raw = resp.json()
+            elif resp.status_code in (403, 404):
+                # Инициализируем просмотр вопроса (как делает фронтенд DiSpace при открытии вкладки задания)
+                init_resp = self.session.post(
+                    f"{self.base_url}/api/v1/test/result",
+                    json={"question_id": int(question_id), "course_id": int(course_id)},
+                    timeout=12,
+                )
+                if init_resp.ok:
+                    raw = init_resp.json()
+        except requests.RequestException:
+            raw = None
+
+        if isinstance(raw, list) and raw:
+            q_obj = raw[0] if isinstance(raw[0], dict) else {}
+        elif isinstance(raw, dict):
+            q_obj = raw
+        else:
+            q_obj = {}
+
+        if not q_obj:
+            return {}
+
+        q_text = html_to_text(str(q_obj.get("text_question") or ""))
+        q_type = str(q_obj.get("type_question") or "text")
+        options: list[dict[str, str]] = []
+        raw_orders = q_obj.get("order_answers")
+        if isinstance(raw_orders, list):
+            for opt in raw_orders:
+                if isinstance(opt, dict):
+                    k = str(opt.get("key") or "")
+                    v = html_to_text(str(opt.get("value") or ""))
+                    if v:
+                        options.append({"key": k, "text": v})
+
+        ans_data = q_obj.get("answer_data")
+        student_answer = ""
+        if isinstance(ans_data, dict):
+            raw_ans = ans_data.get("answers")
+            if isinstance(raw_ans, list):
+                opt_map = {o["key"]: o["text"] for o in options}
+                student_answer = ", ".join(opt_map.get(str(a), str(a)) for a in raw_ans)
+            elif raw_ans is not None:
+                student_answer = str(raw_ans)
+
+        media_urls: list[str] = []
+        for f_info in (q_obj.get("files") or []) + ((q_obj.get("bank_question") or {}).get("files") or []):
+            if isinstance(f_info, dict) and f_info.get("url"):
+                media_urls.append(str(f_info["url"]))
+
+        score = q_obj.get("score_output")
+        max_score = q_obj.get("max_score_output")
+        correct_flag = q_obj.get("correct_answer")
+
+        return {
+            "question_id": int(question_id),
+            "result_id": q_obj.get("id"),
+            "text": q_text,
+            "type": q_type,
+            "options": options,
+            "student_answer": student_answer,
+            "score": score,
+            "max_score": max_score,
+            "correct_status": correct_flag,
+            "remaining_attempts": q_obj.get("remaining_attempts"),
+            "media_urls": media_urls,
+        }
+
+    def get_course_overview(self, course_id: int) -> dict[str, Any]:
+        """Полная структура курса со всеми модулями и темами (включая непройденные, начатые и закрытые) и баллами."""
+        course = self.get_course(course_id)
+        scores = self.get_course_scores(course_id)
+
+        mod_scores_map: dict[int, dict[str, Any]] = {}
+        theme_scores_map: dict[int, dict[str, Any]] = {}
+        for ms in (scores.get("modules") if isinstance(scores, dict) else []) or []:
+            if isinstance(ms, dict) and ms.get("id"):
+                mod_scores_map[int(ms["id"])] = ms
+                for ts in ms.get("themes") or []:
+                    if isinstance(ts, dict) and ts.get("id"):
+                        theme_scores_map[int(ts["id"])] = ts
+
+        modules_out: list[dict[str, Any]] = []
+        total_themes = 0
+        passed_themes = 0
+
+        for mod in course.get("modules") or []:
+            if mod.get("hidden"):
+                continue
+            mid = int(mod.get("id") or 0)
+            ms_info = mod_scores_map.get(mid, {})
+            themes_out: list[dict[str, Any]] = []
+            for th in mod.get("themes") or []:
+                if th.get("hidden"):
+                    continue
+                tid = int(th.get("id") or 0)
+                if not tid:
+                    continue
+                total_themes += 1
+                ts_info = theme_scores_map.get(tid, {})
+                is_passed = bool(ts_info.get("passed") or th.get("passed"))
+                if is_passed:
+                    passed_themes += 1
+                is_locked = bool(ts_info.get("lock") if "lock" in ts_info else th.get("locked"))
+                score_val = ts_info.get("score")
+                score_max = ts_info.get("score_max") if ts_info.get("score_max") is not None else th.get("max_score")
+                test_id = th.get("test_id")
+                restriction_tid = ts_info.get("restriction_theme_id") or th.get("restriction_theme_id")
+
+                if is_passed:
+                    status_badge = "✅ Пройдено"
+                elif is_locked:
+                    status_badge = "🔒 Закрыто (требуется предыдущая тема)"
+                elif score_val and float(score_val) > 0:
+                    status_badge = "⏳ В процессе"
+                else:
+                    status_badge = "🔓 Доступно (не пройдено)"
+
+                themes_out.append(
+                    {
+                        "id": tid,
+                        "title": str(th.get("title") or f"Тема #{tid}").strip(),
+                        "type": "test" if test_id else "theme",
+                        "test_id": test_id,
+                        "passed": is_passed,
+                        "locked": is_locked,
+                        "score": score_val,
+                        "score_max": score_max,
+                        "restriction_theme_id": restriction_tid,
+                        "status_badge": status_badge,
+                        "url": f"{self.base_url}/course/{course_id}/{tid}",
+                    }
+                )
+
+            modules_out.append(
+                {
+                    "id": mid,
+                    "title": str(mod.get("title") or f"Модуль #{mid}").strip(),
+                    "passed": bool(ms_info.get("passed")),
+                    "score": ms_info.get("score"),
+                    "score_max": ms_info.get("score_max"),
+                    "themes": themes_out,
+                }
+            )
+
+        return {
+            "id": course_id,
+            "title": str(course.get("title") or f"Курс #{course_id}").strip(),
+            "description": html_to_text(str(course.get("description") or "")),
+            "total_themes": total_themes,
+            "passed_themes": passed_themes,
+            "modules": modules_out,
+        }
+
+    def get_theme_detailed_blocks(self, course_id: int, theme_id: int) -> dict[str, Any]:
+        """Получить полную детализацию всех фрагментов (блоков теории, видео и практических заданий) внутри темы."""
+        theme = self.get_theme(theme_id)
+        t_title = str(theme.get("title") or f"Тема #{theme_id}").strip()
+        is_locked = bool(theme.get("locked"))
+        is_passed = bool(theme.get("passed"))
+
+        blocks_out: list[dict[str, Any]] = []
+        theory_parts: list[str] = []
+        q_counter = 0
+
+        for idx, block_stub in enumerate(theme.get("blocks") or [], start=1):
+            bid = block_stub.get("id")
+            ctype = str(block_stub.get("content_type") or "text")
+            b_passed = bool(block_stub.get("passed"))
+
+            # Если данные текстовой страницы уже вложены в theme['blocks'], не делаем лишний HTTP-запрос
+            if block_stub.get("text_page") or block_stub.get("question") or block_stub.get("video") or block_stub.get("task"):
+                block = block_stub
+            elif bid:
+                try:
+                    block = self.get_block(int(bid))
+                except requests.RequestException:
+                    block = block_stub
+            else:
+                block = block_stub
+
+            item_title = f"Фрагмент {idx}"
+            item_text = ""
+            question_data: dict[str, Any] = {}
+
+            if ctype == "text" or block.get("text_page"):
+                ctype = "text"
+                tp = block.get("text_page") or {}
+                item_title = str(tp.get("title") or f"Теория (фр. {idx})").strip()
+                item_text = html_to_text(str(tp.get("content") or ""))
+                if item_text:
+                    theory_parts.append(f"### {item_title}\n\n{item_text}")
+
+            elif ctype == "video" or block.get("video"):
+                ctype = "video"
+                vid = block.get("video") or {}
+                v_url = str(vid.get("url") or "").strip()
+                item_title = str(vid.get("title") or f"Видеолекция (фр. {idx})").strip()
+                v_desc = html_to_text(str(vid.get("description") or ""))
+                if v_url:
+                    item_text = f"🎬 [{item_title}]({v_url})" + (f"\n\n{v_desc}" if v_desc else "")
+                    theory_parts.append(f"### 🎬 {item_title}\n\n{item_text}")
+
+            elif ctype == "question" or block.get("question"):
+                ctype = "question"
+                q_counter += 1
+                q_info = block.get("question") or {}
+                qid = q_info.get("id")
+                item_title = f"Задание №{q_counter} (вопрос #{qid})"
+                if qid:
+                    question_data = self.get_question_block_detail(int(qid), int(course_id))
+                    item_text = question_data.get("text") or ""
+
+            elif ctype == "task" or block.get("task"):
+                ctype = "task"
+                q_counter += 1
+                task_obj = block.get("task") or {}
+                item_title = str(task_obj.get("title") or f"Практическое задание №{q_counter}").strip()
+                item_text = html_to_text(str(task_obj.get("content") or task_obj.get("description") or ""))
+
+            files_list = block.get("files") or []
+            for f_info in files_list:
+                f_url = str(f_info.get("url") or "")
+                f_title = str(f_info.get("title") or "Файл").strip()
+                if f_url:
+                    item_text += f"\n\n📎 [{f_title}]({f_url})"
+
+            blocks_out.append(
+                {
+                    "index": idx,
+                    "id": bid,
+                    "content_type": ctype,
+                    "passed": b_passed,
+                    "title": item_title,
+                    "text": item_text.strip(),
+                    "question_data": question_data,
+                    "files": files_list,
+                }
+            )
+
+        return {
+            "course_id": course_id,
+            "theme_id": theme_id,
+            "title": t_title,
+            "passed": is_passed,
+            "locked": is_locked,
+            "restriction_theme_id": theme.get("restriction_theme_id"),
+            "max_score": theme.get("max_score"),
+            "test_id": theme.get("test_id"),
+            "blocks": blocks_out,
+            "combined_theory": "\n\n".join(theory_parts).strip(),
+        }
+
     def _download_file_text(self, file_info: dict[str, Any]) -> str:
         """Скачать прикреплённый файл (.pdf, .docx, .txt, .md, .tex, .csv, .html) и извлечь текст с автоопределением кодировки."""
         f_url = file_info.get("url")
@@ -904,7 +1163,7 @@ class DiSpaceAPI:
         theme_title: str = "",
         include_files: bool = True,
     ) -> list[MaterialItem]:
-        """Собрать все текстовые блоки (с LaTeX, иллюстрациями и видео) и прикреплённые файлы одной темы."""
+        """Собрать все текстовые блоки (с LaTeX, иллюстрациями, видео и заданиями) и прикреплённые файлы одной темы."""
         theme = self.get_theme(theme_id)
         t_title = theme_title or str(theme.get("title") or f"Тема {theme_id}").strip()
         prefix = f"{module_title} — {t_title}" if module_title else t_title
@@ -917,17 +1176,22 @@ class DiSpaceAPI:
                 text_parts.append(desc)
 
         file_items: list[MaterialItem] = []
+        question_parts: list[str] = []
         seen_file_urls: set[str] = set()
+        q_idx = 0
 
         for block_stub in theme.get("blocks") or []:
             bid = block_stub.get("id")
             ctype = block_stub.get("content_type")
             if not bid:
                 continue
-            try:
-                block = self.get_block(int(bid))
-            except requests.RequestException:
+            if block_stub.get("text_page") or block_stub.get("question") or block_stub.get("video") or block_stub.get("task"):
                 block = block_stub
+            else:
+                try:
+                    block = self.get_block(int(bid))
+                except requests.RequestException:
+                    block = block_stub
 
             if ctype == "text" or block.get("text_page"):
                 tp = block.get("text_page") or {}
@@ -948,6 +1212,25 @@ class DiSpaceAPI:
                     if v_desc:
                         vid_md += f"\n\n{v_desc}"
                     text_parts.append(vid_md)
+
+            if ctype == "question" or block.get("question"):
+                q_info = block.get("question") or {}
+                qid = q_info.get("id")
+                if qid:
+                    q_idx += 1
+                    q_detail = self.get_question_block_detail(int(qid), int(course_id))
+                    q_text = q_detail.get("text") or ""
+                    if q_text:
+                        status_str = "✅ пройдено" if block_stub.get("passed") else "⏳ не пройдено"
+                        q_block = f"#### ✏️ Задание №{q_idx} ({status_str})\n\n{q_text}"
+                        opts = q_detail.get("options") or []
+                        if opts:
+                            q_block += "\n\nВарианты ответа:\n" + "\n".join(
+                                f"- {o['text']}" for o in opts
+                            )
+                        if q_detail.get("student_answer"):
+                            q_block += f"\n\n*Текущий ответ в DiSpace:* `{q_detail['student_answer']}`"
+                        question_parts.append(q_block)
 
             if ctype == "task" or block.get("task"):
                 task = block.get("task") or {}
@@ -981,6 +1264,9 @@ class DiSpaceAPI:
                             )
                         )
 
+        if question_parts:
+            text_parts.append("### ✏️ Практические задания по теме\n\n" + "\n\n---\n\n".join(question_parts))
+
         items: list[MaterialItem] = []
         combined_text = "\n\n".join(text_parts).strip()
         if len(combined_text) >= 40:
@@ -998,22 +1284,38 @@ class DiSpaceAPI:
     def extract_course_materials(
         self, course_id: int, include_files: bool = True
     ) -> tuple[str, list[MaterialItem]]:
-        """Собрать все модули, темы и файлы курса. Возвращает (название_курса, список_материалов)."""
+        """Собрать все модули, темы (включая план непройденных тем) и файлы курса."""
+        overview = self.get_course_overview(course_id)
         course = self.get_course(course_id)
         course_title = str(course.get("title") or f"Курс {course_id}").strip()
         all_items: list[MaterialItem] = []
         seen_urls: set[str] = set()
 
-        # Описание курса, если содержательное
+        # Описание курса + полный учебный план со статусом всех тем (включая ещё не пройденные)
         desc_parts = [
             html_to_text(str(course.get(field) or ""))
             for field in ("description", "goals", "thematic", "requirements")
         ]
+        plan_lines = [
+            f"### 📋 Полная структура и прогресс курса «{course_title}» "
+            f"(пройдено тем: {overview['passed_themes']} из {overview['total_themes']})"
+        ]
+        for mod in overview.get("modules") or []:
+            plan_lines.append(f"\n**Модуль: {mod['title']}**")
+            for th in mod.get("themes") or []:
+                score_info = (
+                    f" (балл: {th['score']}/{th['score_max']})"
+                    if th.get("score_max") is not None
+                    else ""
+                )
+                plan_lines.append(f"- {th['status_badge']}: **{th['title']}**{score_info} — {th['url']}")
+        desc_parts.append("\n".join(plan_lines))
+
         desc_text = "\n\n".join(p for p in desc_parts if p).strip()
-        if len(desc_text) >= 120:
+        if len(desc_text) >= 60:
             all_items.append(
                 MaterialItem(
-                    title=f"{course_title} — Описание курса",
+                    title=f"{course_title} — Описание и учебный план курса",
                     text=desc_text,
                     url=f"{self.base_url}/course/{course_id}/description",
                     kind="lecture",

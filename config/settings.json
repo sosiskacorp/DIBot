@@ -44,8 +44,8 @@
     "notes": {
       "model": "qwen3.5:9b",
       "fallback": ["qwen3-vl:8b", "qwen2.5-coder:7b"],
-      "temperature": 0.35,
-      "think": true
+      "temperature": 0.3,
+      "think": false
     },
     "summary": {
       "model": "qwen3.5:9b",

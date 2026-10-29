@@ -71,13 +71,34 @@ def _is_meta_or_conversational(query: str) -> bool:
 PRACTICE_SYSTEM = """Ты составляешь тренировочные задания по учебной теме.
 
 Отвечай ТОЛЬКО JSON:
-{"tasks": [{"statement": "условие", "answer": "краткий ответ",
-            "solution": "пошаговое решение", "difficulty": "лёгкий|средний|сложный"}]}
+{"tasks": [{"statement": "условие (формулы в $...$)", "answer": "краткий ответ",
+            "solution": "подробное тетрадное пошаговое решение (формулы в $...$ и $$...$$)", "difficulty": "лёгкий|средний|сложный"}]}
 
 Требования:
 - задания должны быть решаемы теми методами, что в материалах;
 - ответ должен быть однозначным и проверяемым;
-- condition самодостаточен: никаких «см. выше» и ссылок на рисунки."""
+- все слэши LaTeX внутри JSON экранируй двойным слэшем (\\\\frac, \\\\lim, \\\\sqrt);
+- условие самодостаточно: никаких «см. выше» и ссылок на рисунки."""
+
+NOTEBOOK_SOLUTION_SYSTEM = """Ты — образцовый студент-отличник и преподаватель НГТУ.
+Твоя задача — оформить решение учебного задания из курса DiSpace строго по всем правилам университетского тетрадного оформления, опираясь на теоретический материал текущей лекции.
+
+Структура тетрадного оформления:
+1. **📋 Дано и требуется найти:**
+   Чёткая математическая запись исходного условия задачи, функции, последовательности или вариантов ответа.
+2. **📖 Теоретическая база (по материалам лекции):**
+   Укажи точное определение, теорему, табличную формулу или правило дифференцирования/пределов/матриц из приведённого конспекта лекции, которое применяется в этой задаче (в тех же обозначениях, что и в лекции).
+3. **✍️ Подробный тетрадный ход решения:**
+   Расписывай каждый шаг последовательно, без пропуска промежуточных выкладок:
+   - что подставляем,
+   - какое тождество или правило применяем на каждом переходе,
+   - промежуточные упрощения.
+   Все строчные формулы оформляй в `$...$`, а ключевые выкладки, пределы, дроби и матрицы — на отдельных строках в `$$...$$`.
+4. **✅ Итоговый ответ (и формат для поля ввода DiSpace):**
+   - Классическая математическая запись: `Ответ: ...`
+   - Строка для ввода в поле DiSpace (если текстовый ответ: например `18*x^(3)-4*x^(-3)` или `-1/2`, либо точный выбор верных пунктов из предложенных вариантов).
+
+Если студент прислал свой вариант ответа или решения на проверку — сначала внимательно проверь его: похвали за верные шаги, укажи точную строчку с ошибкой (если она есть) и затем приведи полное эталонное тетрадное решение."""
 
 VISION_EXTRACT_SYSTEM = """Ты — модуль оптического распознавания учебных материалов и задач.
 Твоя задача — максимально точно переписать весь текст, условия задач, таблицы и математические
@@ -299,12 +320,10 @@ class Tutor:
         difficulty: str = "средний",
         course: str | None = None,
         verify: bool = True,
+        on_stream: Any = None,
+        deep_think: bool = False,
     ) -> tuple[list[dict[str, Any]], list[VerificationReport]]:
-        """Сгенерировать тренировочные задания и проверить эталонные решения.
-
-        Это замена «прохождению теста»: те же типы задач, но ответы проверяются
-        заранее, чтобы студент учился на корректных эталонах.
-        """
+        """Сгенерировать тренировочные задания в реальном времени и проверить эталонные решения."""
         context = self.store.context_for(topic, k=3, max_chars=3500, course=course)
         prompt = f"Тема: {topic}\nУровень: {difficulty}\nКоличество заданий: {count}\n"
         if context:
@@ -316,7 +335,9 @@ class Tutor:
                 {"role": "user", "content": prompt},
             ],
             task="math",
+            think=deep_think,
             json_format="json",
+            on_stream=on_stream,
         )
         tasks = _parse_tasks(result.text)
         if not verify or not tasks:
@@ -331,9 +352,89 @@ class Tutor:
                     "answer": t.get("answer", ""),
                 }
                 for t in tasks
-            ]
+            ],
+            use_model=False,
         )
         return tasks, reports
+
+    def solve_course_assignment(
+        self,
+        question_text: str,
+        *,
+        options: Sequence[dict[str, str]] | None = None,
+        theme_theory_text: str = "",
+        course_name: str | None = None,
+        student_attempt: str = "",
+        on_stream: Any = None,
+    ) -> Answer:
+        """Решить задание из темы курса (или проверить решение студента) с полным тетрадным оформлением по лекциям."""
+        started = time.perf_counter()
+        sources: list[str] = []
+        used = "нет"
+
+        theory_context = (theme_theory_text or "").strip()
+        if theory_context:
+            used = "лекция текущей темы"
+            sources.append("Теоретические блоки текущей темы курса")
+        else:
+            hits = self.store.search(question_text, k=4, course=course_name, min_score=1.5)
+            if hits:
+                blocks = []
+                for ch, _sc in hits[:3]:
+                    blocks.append(f"[{ch.id}] «{ch.title}»:\n{ch.text}")
+                    sources.append(f"{ch.title} (фр. {ch.index + 1})")
+                theory_context = "\n\n---\n\n".join(blocks)
+                used = "материалы курса"
+
+        prompt_parts: list[str] = []
+        if theory_context:
+            prompt_parts.append(f"ТЕОРИЯ И ОБРАЗЦЫ РЕШЕНИЙ ИЗ ЛЕКЦИИ КУРСА:\n{theory_context[:6500]}")
+
+        q_block = f"УСЛОВИЕ ЗАДАНИЯ:\n{question_text.strip()}"
+        if options:
+            opts_lines = [f"- Вариант {idx}: {opt.get('text', '')}" for idx, opt in enumerate(options, 1)]
+            q_block += "\n\nВАРИАНТЫ ОТВЕТА:\n" + "\n".join(opts_lines)
+        prompt_parts.append(q_block)
+
+        if student_attempt.strip():
+            prompt_parts.append(
+                f"ОТВЕТ / РЕШЕНИЕ СТУДЕНТА НА ПРОВЕРКУ:\n{student_attempt.strip()}\n\n"
+                "Проверь ответ студента, укажи верно ли он решён (и где ошибка, если она есть), "
+                "а затем приведи полное эталонное тетрадное решение по материалам лекции."
+            )
+        else:
+            prompt_parts.append(
+                "Оформи полное пошаговое тетрадное решение этого задания по всем правилам, "
+                "опираясь на теорию и образцы из лекции курса."
+            )
+
+        result = self.llm.chat(
+            [
+                {"role": "system", "content": NOTEBOOK_SOLUTION_SYSTEM},
+                {"role": "user", "content": "\n\n".join(prompt_parts)},
+            ],
+            task="math",
+            text_hint=question_text,
+            on_stream=on_stream,
+        )
+        answer_text = format_math_markdown(_strip_prompt_echo(result.text, NOTEBOOK_SOLUTION_SYSTEM))
+        report = self.verifier.verify(
+            problem=question_text,
+            solution=answer_text,
+            solver_model=result.model,
+            use_model=False,
+        )
+        return Answer(
+            question=question_text,
+            text=answer_text,
+            task="notebook_math",
+            model=result.model,
+            seconds=round(time.perf_counter() - started, 2),
+            sources=_dedupe(sources),
+            verification=report,
+            context_used=used,
+            thinking=result.thinking,
+        )
 
     # ------------------------------------------------------------- служебное
 
@@ -354,10 +455,15 @@ def _parse_tasks(text: str) -> list[dict[str, Any]]:
     start, end = cleaned.find("{"), cleaned.rfind("}")
     if start == -1 or end == -1:
         return []
+    raw_json = cleaned[start : end + 1]
+    safe_json = re.sub(r'\\(?![/\"\\]|u[0-9a-fA-F]{4})', r"\\\\", raw_json)
     try:
-        data = json.loads(cleaned[start : end + 1])
+        data = json.loads(safe_json)
     except json.JSONDecodeError:
-        return []
+        try:
+            data = json.loads(raw_json)
+        except json.JSONDecodeError:
+            return []
     tasks = data.get("tasks") if isinstance(data, dict) else data
     if not isinstance(tasks, list):
         return []
@@ -366,9 +472,9 @@ def _parse_tasks(text: str) -> list[dict[str, Any]]:
         if isinstance(item, dict) and item.get("statement"):
             out.append(
                 {
-                    "statement": str(item["statement"]).strip(),
-                    "answer": str(item.get("answer", "")).strip(),
-                    "solution": str(item.get("solution", "")).strip(),
+                    "statement": format_math_markdown(str(item["statement"]).strip()),
+                    "answer": format_math_markdown(str(item.get("answer", "")).strip()),
+                    "solution": format_math_markdown(str(item.get("solution", "")).strip()),
                     "difficulty": str(item.get("difficulty", "")).strip(),
                 }
             )

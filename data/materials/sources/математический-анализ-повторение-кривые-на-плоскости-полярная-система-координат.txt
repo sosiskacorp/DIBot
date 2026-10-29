@@ -14,19 +14,17 @@
 
 ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/80a006ad-ee14-4cd9-9b9b-8d0c7446c9fe.png)
 
-$\left\{ {
-
 $$
-\begin{array}{*{20}{c}}{x = \rho \cos \varphi }\\{y = \rho \sin \varphi }\end{array}
+\left\{ {\begin{array}{*{20}{c}}{x = \rho \cos \varphi }\\{y = \rho \sin \varphi }\end{array}} \right.\;\;
 $$
 
-} \right.\;\;$и$\;\;\left\{ {
+ и 
 
 $$
-\begin{array}{l}{\rho = \sqrt {x^2+ y^2}}\\{{\rm tg}\ \varphi= \ \frac{y}{x}}\end{array}
+\;\;\left\{ {\begin{array}{l}{\rho = \sqrt {x^2+ y^2}}\\{{\rm tg}\ \varphi= \ \frac{y}{x}}\end{array}} \right.
 $$
 
-} \right.$.
+.
 
 Исследование функции, заданной в полярных координатах, начинается с нахождения области ее определения из условия, что $\rho \left( \varphi \right) \ge 0$.
 
@@ -74,10 +72,7 @@ $$
 \frac{{5\pi }}{3}
 $$
 
-\frac{{11\pi }}{6}
-
-$$
-2\pi$
+\frac{{11\pi }}{6}$$2\pi$
 
 $\rho$00,521,051,572,092,623,143,664,194,715,235,766,28
 
@@ -141,23 +136,23 @@ $\cos 8\varphi \ge 0\;\; \Leftrightarrow \;\; - \frac{\pi }{2} + 2\pi k \le 8\va
 
 При $k = 0$: $- \frac{\pi }{{16}} \le \varphi \le \frac{{\pi k}}{16}$
 
-При $k = 1$:
-$$
+При $k = 1$: 
 
+$$
 - \frac{\pi }{{16}} + \frac{\pi }{4} \le \varphi \le \frac{\pi }{{16}} + \frac{\pi }{4}\;\; \Rightarrow \;\;\frac{{3\pi }}{{16}} \le \varphi \le \frac{{5\pi }}{{16}}
-
-$$
-При $k = 2$:
 $$
 
+При $k = 2$: 
+
+$$
 - \frac{\pi }{{16}} + \frac{\pi }{2} \le \varphi \le \frac{\pi }{{16}} + \frac{\pi }{2}\;\; \Rightarrow \;\;\frac{{7\pi }}{{16}} \le \varphi \le \frac{{9\pi }}{{16}}
-
 $$
+
 И т.д.
 
-При $k = 8$:
-$$
+При $k = 8$: 
 
+$$
 - \frac{\pi }{{16}} + 2\pi \le \varphi \le \frac{\pi }{{16}} + 2\pi \;\; \Rightarrow \;\; - \frac{\pi }{{16}} \le \varphi \le \frac{\pi }{{16}}
 $$
 
@@ -314,3 +309,119 @@ $\rho=6\;\Rightarrow \; 4\sin\varphi+2=6\;\Rightarrow\;\sin\varphi=1\;\Rightarro
 Шаг 4. Построим кривую в найденно й области определения
 
 ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/7801724c-4256-490a-87bb-9fe74cbd8512.png)
+
+### ✏️ Практические задания по теме
+
+#### ✏️ Задание №1 (✅ пройдено)
+
+Постройте кривую, заданную уравнением $\rho = 2 - 4\cos \varphi$
+
+Шаг 1. Найдите область определения функции
+
+Варианты ответа:
+- $\varphi \in \left[ { - \frac{{\pi }}{3};\frac{\pi }{3}} \right]$
+- $\varphi \in \left[ { \frac{{\pi }}{3};\frac{5\pi }{3}} \right]$
+- $\varphi \in \left[ { \frac{{2\pi }}{3};\frac{{4\pi }}{3}} \right]$
+- $\varphi \in \left[ { - \frac{\pi }{6};\frac{{\pi }}{6}} \right]$
+- $\varphi \in \left[ { \frac{{\pi }}{3};\frac{4\pi }{3}} \right]$
+
+*Текущий ответ в DiSpace:* `answer2196`
+
+---
+
+#### ✏️ Задание №2 (✅ пройдено)
+
+Постройте кривую, заданную уравнением $\rho = 2 - 4\cos \varphi$
+
+Шаг 2. Определите, при каких значениях полярного угла $\varphi$ полярный радиус $\rho = 2 - 4\cos \varphi$ принимает наибольшее значение
+
+Варианты ответа:
+- $\varphi = \pi$
+- $\varphi = - \frac{\pi }{3}$
+- $\varphi = - \frac{\pi }{2}$
+- $\varphi = - \frac{\pi }{6}$
+
+*Текущий ответ в DiSpace:* `$\varphi = \pi$`
+
+---
+
+#### ✏️ Задание №3 (✅ пройдено)
+
+Постройте кривую, заданную уравнением $\rho = 2 - 4\cos \varphi$
+
+Шаг 3. Укажите наибольшее значение функции $\rho = 2 - 4\cos \varphi$
+
+*Текущий ответ в DiSpace:* `6`
+
+---
+
+#### ✏️ Задание №4 (✅ пройдено)
+
+Постройте кривую, заданную уравнением $\rho = 2 - 4\cos \varphi$
+
+Шаг 4. Определите вид кривой $\rho = 2 - 4\cos \varphi$
+
+Варианты ответа:
+- ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/7b9adaa1-a029-4e28-90aa-e72461469379.png)
+- ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/f05a8165-c9f1-484b-b792-e67a9c99b14a.png)
+- ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/c4db5e3f-fbfc-4010-b40b-76a05be67ad8.png)
+
+*Текущий ответ в DiSpace:* `![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/f05a8165-c9f1-484b-b792-e67a9c99b14a.png)`
+
+---
+
+#### ✏️ Задание №5 (✅ пройдено)
+
+Постройте кривую, заданную уравнением $\rho = 2\cos 6\varphi$
+
+Шаг 1. Найдите область определения функции
+
+Варианты ответа:
+- $\varphi \in \left[ { - \frac{\pi }{{12}} + \frac{{\pi k}}{3};\frac{\pi }{{12}} + \frac{{\pi k}}{3}} \right]$
+- $\varphi \in \left[ { - \frac{\pi }{6} + \frac{{2\pi k}}{3};\frac{\pi }{6} + \frac{{2\pi k}}{3}} \right]$
+- $\varphi \in \left[ { - \frac{\pi }{{24}} + \frac{{\pi k}}{6};\frac{\pi }{{24}} + \frac{{\pi k}}{6}} \right]$
+- Функция определена при любых значения полярного угла $\varphi$
+
+*Текущий ответ в DiSpace:* `$\varphi \in \left[ { - \frac{\pi }{{12}} + \frac{{\pi k}}{3};\frac{\pi }{{12}} + \frac{{\pi k}}{3}} \right]$`
+
+---
+
+#### ✏️ Задание №6 (✅ пройдено)
+
+Постройте кривую, заданную уравнением $\rho = 2\cos 6\varphi$
+
+Шаг 2. Определите количество углов тригонометрического круга, в которых определена функция $\rho = 2\cos 6\varphi$
+
+*Текущий ответ в DiSpace:* `6`
+
+---
+
+#### ✏️ Задание №7 (✅ пройдено)
+
+Постройте кривую, заданную уравнением $\rho = 2\cos 6\varphi$
+
+Шаг 3. Определите, при каких значениях полярного угла $\varphi$ полярный радиус $\rho = 2\cos 6\varphi$ принимает наибольшее значение
+
+Варианты ответа:
+- $\varphi = \frac{\pi }{2} + \frac{{\pi k}}{3}$
+- $\varphi = \pi + \frac{{\pi k}}{3}$
+- $\varphi = \frac{{\pi k}}{3}$
+- $\varphi = \frac{\pi }{{12}} + \frac{{\pi k}}{3}$
+
+*Текущий ответ в DiSpace:* `$\varphi = \frac{{\pi k}}{3}$`
+
+---
+
+#### ✏️ Задание №8 (✅ пройдено)
+
+Постройте кривую, заданную уравнением $\rho = 2\cos 6\varphi$
+
+Шаг 4. Определите вид кривой $\rho = 2\cos 6\varphi$
+
+Варианты ответа:
+- ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/c016a7ba-fe5f-4cae-a00d-09651ec1f468.png)
+- ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/ba1717e2-f3d1-423d-a981-f79aad64df10.png)
+- ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/48f0044a-ba40-469a-b71e-4beabf44cb7e.png)
+- ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/2a4e9f70-f931-4f89-a4e7-259247b3b659.png)
+
+*Текущий ответ в DiSpace:* `![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/48f0044a-ba40-469a-b71e-4beabf44cb7e.png)`

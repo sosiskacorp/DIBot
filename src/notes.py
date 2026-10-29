@@ -70,6 +70,7 @@ class NoteBuilder:
         source: Source,
         max_chunks: int | None = None,
         on_progress=None,
+        on_stream=None,
     ) -> NoteResult:
         chunks: Sequence[Chunk] = [
             self.store.chunks[cid] for cid in source.chunk_ids if cid in self.store.chunks
@@ -87,7 +88,13 @@ class NoteBuilder:
         for position, chunk in enumerate(chunks, start=1):
             if on_progress:
                 on_progress(position, len(chunks), chunk)
-            lines = self._summarise_chunk(chunk)
+
+            def _chunk_stream(kind: str, partial_text: str, _model: str) -> None:
+                if on_stream and kind == "content":
+                    preview_sections = list(sections) + [(chunk, partial_text.strip())]
+                    on_stream(self._render(source, preview_sections))
+
+            lines = self._summarise_chunk(chunk, on_stream=_chunk_stream if on_stream else None)
             if not lines:
                 skipped.append(chunk.index)
                 continue
@@ -103,6 +110,8 @@ class NoteBuilder:
                 kept.append(line)
             if kept:
                 sections.append((chunk, "\n".join(kept)))
+                if on_stream:
+                    on_stream(self._render(source, sections))
 
         text = self._render(source, sections)
         path = self._save(source, text)
@@ -120,7 +129,7 @@ class NoteBuilder:
 
     # ------------------------------------------------------------ внутреннее
 
-    def _summarise_chunk(self, chunk: Chunk) -> list[str]:
+    def _summarise_chunk(self, chunk: Chunk, on_stream=None) -> list[str]:
         marker = f"[#{chunk.index + 1}]"
         prompt = (
             f"ФРАГМЕНТ {chunk.index + 1} из «{chunk.title}»:\n\n"
@@ -134,6 +143,8 @@ class NoteBuilder:
                     {"role": "user", "content": prompt},
                 ],
                 task="notes",
+                think=False,
+                on_stream=on_stream,
             )
         except LLMError:
             return []

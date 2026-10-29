@@ -176,3 +176,43 @@ $\frac{f(x)}{k}$
 Эскиз графика функции $\ln(|x|)$ получится из исходного сохранением части кривой, лежащей справа от оси $Oy$, и её симметричным отражением влево от оси $Oy$.
 
 ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/3f5f9b18-1ca5-46f2-a4a8-bb1c9b4c6052.png)
+
+### ✏️ Практические задания по теме
+
+#### ✏️ Задание №1 (✅ пройдено)
+
+Укажите график функции $y=e^{x}+1$
+
+Варианты ответа:
+- ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/77405643-0274-4995-b490-dda1636969c6.png)
+- ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/26e66bc2-2b27-4ff1-affb-74db7d57c7ea.png)
+- ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/cb468dd8-166b-45ea-b3e7-9ecc7b147c58.png)
+- ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/f28d5b02-a15f-46ae-a31f-36c04660058b.png)
+
+*Текущий ответ в DiSpace:* `![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/cb468dd8-166b-45ea-b3e7-9ecc7b147c58.png)`
+
+---
+
+#### ✏️ Задание №2 (✅ пройдено)
+
+Укажите, на каком рисунке изображен график функции $y=\sin{2x}$
+
+![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/a229f5c6-94d3-402b-a218-8491b79e0c46.gif)
+
+*Текущий ответ в DiSpace:* `2`
+
+---
+
+#### ✏️ Задание №3 (✅ пройдено)
+
+Укажите функцию, график которой изображен на рисунке сплошной линией
+
+![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/a4475525-4fee-4c10-9309-f02f320ed6e6.png)
+
+Варианты ответа:
+- $y=\left|e^x+1\right|$
+- $y=e^{-|x|}$
+- $y=\left|e^x-1\right|$
+- $y=e^{|x|}$
+
+*Текущий ответ в DiSpace:* `$y=\left|e^x-1\right|$`

@@ -50,19 +50,9 @@ $x\in\left(-\infty;-4\right]\cup\left(-1;0\right]\cup\left\{2\right\}$
 
 Р е ш е н и е. Раскроем модуль, перейдем к совокупности неравенств:
 
-$\left[
-
 $$
-\begin{matrix}x-1\le -2 \\ x-1\ge 2\end{matrix}
+\left[\begin{matrix}x-1\le -2 \\ x-1\ge 2\end{matrix}\right.\;\Rightarrow\;\left[\begin{matrix}x\le -1 \\ x\ge 3\end{matrix}\right.
 $$
-
-\right.\;\Rightarrow\;\left[
-
-$$
-\begin{matrix}x\le -1 \\ x\ge 3\end{matrix}
-$$
-
-\right.$
 
 Ответом является объединение двух промежутков $\left(-\infty ;-1\right]\cup\left[3;+\infty \right)$
 
@@ -158,13 +148,9 @@ $x^2-5x+6=0$
 
 $D=25-24=1$
 
-$x_{1,2}=\frac{5\pm\sqrt 1}2=\left[
-
 $$
-\begin{matrix}3\\2\end{matrix}
+x_{1,2}=\frac{5\pm\sqrt 1}2=\left[\begin{matrix}3\\2\end{matrix}\right.
 $$
-
-\right.$
 
 $x^2-5x+6=\left(x-3\right)\left(x-2\right)$
 
@@ -178,23 +164,17 @@ $\frac{x^2-5x+6}{x^2-4}=\frac{(x-3)(x-2)}{(x-2)(x+2)}=\frac{x-3}{x+2},\; x\ne 2$
 
 ### Решение систем
 
-Задача 17. Решить систему $\left\{
+Задача 17. Решить систему 
 
 $$
-\begin{matrix}x-2y=1 \\ 2x-3y=5\end{matrix}
+\left\{\begin{matrix}x-2y=1 \\ 2x-3y=5\end{matrix}\right.
 $$
-
-\right.$
 
 Р е ш е н и е. Умножим первое уравнение на 2 и вычтем из второго (чтобы исключить переменную $x$ из системы)
 
-$-\left\{
-
 $$
-\begin{matrix}2x-4y=2 \\ 2x-3y=5\end{matrix}
+-\left\{\begin{matrix}2x-4y=2 \\ 2x-3y=5\end{matrix}\right.\;\Rightarrow \;y=3
 $$
-
-\right.\;\Rightarrow \;y=3$
 
 затем из первого уравнения выразим $x$ как $x=1+2y$
 

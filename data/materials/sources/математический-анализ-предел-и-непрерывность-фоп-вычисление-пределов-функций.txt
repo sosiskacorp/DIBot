@@ -69,3 +69,67 @@ $\mathop {\lim }\limits_{x \to + \infty } {\mathop{\rm arcctg}\nolimits} x = 0$,
 Запомните, что $\mathop {\lim }\limits_{x \to \infty } \sin x$ и $\mathop {\lim }\limits_{x \to \infty } \cos x$ не существуют, так как синус и косинус периодические функции, принимающие при бесконечном возрастании аргумента любые значения из промежутка $\left[ { - 1;1} \right]$.
 
 Также не существуют пределы $\mathop {\lim }\limits_{x \to \infty } {\mathop{\rm tg}\nolimits} x$ и $\mathop {\lim }\limits_{x \to \infty } {\mathop{\rm ctg}\nolimits} x$.
+
+### ✏️ Практические задания по теме
+
+#### ✏️ Задание №1 (✅ пройдено)
+
+Вычислите предел $\mathop {\lim }\limits_{x \to 0} \frac{{{x^2} + 4}}{{{x^3} + 2}}$
+
+*Текущий ответ в DiSpace:* `2`
+
+---
+
+#### ✏️ Задание №2 (✅ пройдено)
+
+Вычислите предел $\mathop {\lim }\limits_{x \to 2} \frac{{\sin \pi x}}{{\cos 2\pi x}}$
+
+*Текущий ответ в DiSpace:* `0`
+
+---
+
+#### ✏️ Задание №3 (✅ пройдено)
+
+Вычислите предел $\mathop {\lim }\limits_{x \to 2} \frac{{\cos \pi x}}{{{x^2} + x - 6}}$
+
+*Текущий ответ в DiSpace:* `б`
+
+---
+
+#### ✏️ Задание №4 (✅ пройдено)
+
+Вычислите предел $\mathop {\lim }\limits_{x \to \infty } \frac{{\cos x}}{{{\ln x^2}}}$
+
+*Текущий ответ в DiSpace:* `0`
+
+---
+
+#### ✏️ Задание №5 (✅ пройдено)
+
+Вычислите предел $\mathop {\lim }\limits_{x \to 2} {x^2}{\mathop{\rm ctg}\nolimits} \pi x$
+
+*Текущий ответ в DiSpace:* `б`
+
+---
+
+#### ✏️ Задание №6 (✅ пройдено)
+
+Вычислите предел $\mathop {\lim }\limits_{x \to 0} {\left( {x - 1} \right)^2}{e^{\frac{1}{{{x^2}}}}}$
+
+*Текущий ответ в DiSpace:* `б`
+
+---
+
+#### ✏️ Задание №7 (✅ пройдено)
+
+Вычислите предел $\mathop {\lim }\limits_{x \to + 0} \cos x \cdot \ln x$
+
+*Текущий ответ в DiSpace:* `-б`
+
+---
+
+#### ✏️ Задание №8 (✅ пройдено)
+
+Вычислите предел $\mathop {\lim }\limits_{x \to 9} {x^{100}}\ln \left( {10 - x} \right)$
+
+*Текущий ответ в DiSpace:* `0`

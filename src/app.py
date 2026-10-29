@@ -14,11 +14,13 @@
 """
 
 import importlib
+import json
 import os
 import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -257,6 +259,120 @@ def open_dispace_browser_login_dialog(is_cloud_env: bool) -> None:
                 st.error(err)
 
 
+@st.dialog("📖 Читалка учебного материала", width="large")
+def open_material_reader_dialog(title: str, course: str, url: str, full_text: str) -> None:
+    """Отдельное полноэкранное окно для комфортного чтения длинных лекций и методичек с пагинацией."""
+    st.markdown(f"#### {title}")
+    st.caption(f"Курс: **{course}** · Всего символов: `{len(full_text):,}`".replace(",", " ") + (f" · [Открыть в DiSpace]({url})" if url else ""))
+
+    page_size = 10000
+    total_pages = max(1, (len(full_text) + page_size - 1) // page_size)
+    dlg_page_key = f"dlg_reader_page_{slugify(title)}"
+    cur_page = int(st.session_state.get(dlg_page_key, 1))
+    cur_page = max(1, min(cur_page, total_pages))
+
+    c1, c2, c3, c4 = st.columns([1, 2, 1, 2])
+    with c1:
+        if st.button("⬅️ Назад", disabled=(cur_page <= 1), key=f"dlg_prev_{slugify(title)}", width="stretch"):
+            st.session_state[dlg_page_key] = cur_page - 1
+            cur_page -= 1
+    with c2:
+        st.markdown(f"<div style='text-align:center;padding-top:6px;'><b>Страница {cur_page} из {total_pages}</b></div>", unsafe_allow_html=True)
+    with c3:
+        if st.button("Далее ➡️", disabled=(cur_page >= total_pages), key=f"dlg_next_{slugify(title)}", width="stretch"):
+            st.session_state[dlg_page_key] = cur_page + 1
+            cur_page += 1
+    with c4:
+        show_all = st.toggle("Показать весь текст целиком", value=(total_pages == 1), key=f"dlg_all_{slugify(title)}")
+
+    st.divider()
+    slice_text = full_text if show_all else full_text[(cur_page - 1) * page_size : cur_page * page_size]
+    render_rich_content(slice_text)
+
+
+CHAT_HISTORY_FILE = PROJECT_ROOT / "data" / "chat_sessions.json"
+
+
+def _serialize_chat_sessions(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for s in sessions:
+        turns_clean = []
+        for t in s.get("turns") or []:
+            ans_obj: Answer | None = t.get("answer")
+            turns_clean.append(
+                {
+                    "role": t.get("role", "user"),
+                    "content": t.get("content", ""),
+                    "meta": (
+                        {
+                            "task": ans_obj.task,
+                            "model": ans_obj.model,
+                            "seconds": ans_obj.seconds,
+                            "sources": ans_obj.sources,
+                            "context_used": ans_obj.context_used,
+                            "thinking": ans_obj.thinking,
+                        }
+                        if ans_obj
+                        else t.get("meta")
+                    ),
+                }
+            )
+        out.append(
+            {
+                "id": s["id"],
+                "title": s["title"],
+                "updated_at": s.get("updated_at", ""),
+                "turns": turns_clean,
+            }
+        )
+    return out
+
+
+def _init_chat_sessions() -> None:
+    if "chat_sessions" in st.session_state and st.session_state["chat_sessions"]:
+        return
+    loaded: list[dict[str, Any]] = []
+    if IS_LOCAL_PC and CHAT_HISTORY_FILE.exists():
+        try:
+            raw = json.loads(CHAT_HISTORY_FILE.read_text(encoding="utf-8"))
+            if isinstance(raw, list):
+                loaded = raw
+        except Exception:
+            loaded = []
+    if not loaded:
+        now_str = datetime.now().strftime("%d.%m %H:%M")
+        loaded = [{"id": f"chat_{int(time.time())}", "title": "Новый диалог", "updated_at": now_str, "turns": []}]
+    st.session_state["chat_sessions"] = loaded
+    st.session_state["active_chat_id"] = loaded[0]["id"]
+    st.session_state.chat_turns = list(loaded[0].get("turns") or [])
+
+
+def _save_active_chat_turns() -> None:
+    _init_chat_sessions()
+    active_id = st.session_state.get("active_chat_id")
+    turns = st.session_state.get("chat_turns") or []
+    now_str = datetime.now().strftime("%d.%m %H:%M")
+    for s in st.session_state["chat_sessions"]:
+        if s["id"] == active_id:
+            s["turns"] = list(turns)
+            s["updated_at"] = now_str
+            if turns and (s["title"] == "Новый диалог" or s["title"].startswith("Диалог ")):
+                first_user = next((t.get("content", "") for t in turns if t.get("role") == "user"), "")
+                first_line = first_user.splitlines()[0].strip() if first_user else ""
+                if first_line:
+                    s["title"] = first_line[:42] + ("…" if len(first_line) > 42 else "")
+            break
+    if IS_LOCAL_PC:
+        try:
+            CHAT_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+            CHAT_HISTORY_FILE.write_text(
+                json.dumps(_serialize_chat_sessions(st.session_state["chat_sessions"]), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
+
 def sync_materials() -> MaterialStore:
     """Перечитать индекс материалов с диска, чтобы импортированные курсы сразу появлялись в UI."""
     store = get_store()
@@ -397,7 +513,21 @@ def render_assistant_turn(turn: dict[str, Any]) -> None:
     """Отрисовать сообщение ассистента со всеми деталями (фото-OCR, формулы, видео, ход мыслей, проверка)."""
     ans: Answer | None = turn.get("answer")
     if ans is None:
+        meta = turn.get("meta") or {}
+        if meta.get("thinking"):
+            with st.expander("💭 Ход рассуждений модели", expanded=False):
+                st.caption(meta["thinking"])
         render_rich_content(turn.get("content", ""))
+        if meta.get("model"):
+            badges = [
+                f"модель: `{meta.get('model')}`",
+                f"задача: `{meta.get('task', 'chat')}`",
+                f"контекст: **{meta.get('context_used', 'нет')}**",
+                f"время: {float(meta.get('seconds') or 0):.1f} с",
+            ]
+            st.caption(" · ".join(badges))
+        if meta.get("sources"):
+            st.caption("📚 Источники: " + " · ".join(meta["sources"][:5]))
         return
 
     if ans.extracted_image_text:
@@ -528,10 +658,62 @@ with st.sidebar:
     forced_task = task_mode_options[selected_task_label]
 
     use_web = st.toggle("🌐 Веб-поиск (SearXNG)", value=False)
-    do_verify = st.toggle("✅ Проверять решения (SymPy + LLM)", value=True)
+    do_verify = st.toggle("✅ Проверять решения (SymPy)", value=True)
 
-    if st.button("🗑️ Очистить диалог", width="stretch"):
-        st.session_state.chat_turns = []
+    st.divider()
+    _init_chat_sessions()
+    st.markdown("**🗂️ История чатов**")
+    ch_col1, ch_col2 = st.columns([1, 1])
+    with ch_col1:
+        if st.button("➕ Новый чат", width="stretch", type="primary"):
+            new_id = f"chat_{int(time.time() * 1000)}"
+            now_str = datetime.now().strftime("%d.%m %H:%M")
+            st.session_state["chat_sessions"].insert(
+                0,
+                {"id": new_id, "title": "Новый диалог", "updated_at": now_str, "turns": []},
+            )
+            st.session_state["active_chat_id"] = new_id
+            st.session_state.chat_turns = []
+            _save_active_chat_turns()
+            st.rerun()
+    with ch_col2:
+        if st.button("🗑️ Удалить чат", width="stretch"):
+            cur_id = st.session_state.get("active_chat_id")
+            st.session_state["chat_sessions"] = [
+                s for s in st.session_state["chat_sessions"] if s["id"] != cur_id
+            ]
+            if not st.session_state["chat_sessions"]:
+                new_id = f"chat_{int(time.time() * 1000)}"
+                now_str = datetime.now().strftime("%d.%m %H:%M")
+                st.session_state["chat_sessions"] = [
+                    {"id": new_id, "title": "Новый диалог", "updated_at": now_str, "turns": []}
+                ]
+            st.session_state["active_chat_id"] = st.session_state["chat_sessions"][0]["id"]
+            st.session_state.chat_turns = list(st.session_state["chat_sessions"][0].get("turns") or [])
+            _save_active_chat_turns()
+            st.rerun()
+
+    session_ids = [s["id"] for s in st.session_state["chat_sessions"]]
+    session_map = {s["id"]: s for s in st.session_state["chat_sessions"]}
+    cur_active_id = st.session_state.get("active_chat_id") or session_ids[0]
+    if cur_active_id not in session_map:
+        cur_active_id = session_ids[0]
+        st.session_state["active_chat_id"] = cur_active_id
+
+    chosen_chat_id = st.radio(
+        "Сохранённые диалоги",
+        session_ids,
+        index=session_ids.index(cur_active_id),
+        format_func=lambda sid: (
+            f"💬 {session_map[sid]['title']} "
+            f"({len(session_map[sid].get('turns') or []) // 2} отв. · {session_map[sid].get('updated_at', '')})"
+        ),
+        label_visibility="collapsed",
+    )
+    if chosen_chat_id != cur_active_id:
+        _save_active_chat_turns()
+        st.session_state["active_chat_id"] = chosen_chat_id
+        st.session_state.chat_turns = list(session_map[chosen_chat_id].get("turns") or [])
         st.rerun()
 
 
@@ -550,8 +732,7 @@ tabs = st.tabs(
 # ===================================================================== 1. ЧАТ
 
 with tabs[0]:
-    if "chat_turns" not in st.session_state:
-        st.session_state.chat_turns = []
+    _init_chat_sessions()
 
     # Приветственный экран и быстрые подсказки, когда чат пуст
     if not st.session_state.chat_turns:
@@ -740,6 +921,7 @@ with tabs[0]:
                         "answer": answer,
                     }
                     st.session_state.chat_turns.append(assistant_turn)
+                    _save_active_chat_turns()
                     render_assistant_turn(assistant_turn)
 
 
@@ -748,8 +930,8 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("🎓 Интеграция с DiSpace НГТУ (только чтение)")
     st.caption(
-        "Все 6 разделов личного кабинета студента НГТУ. Пароль не хранится: используется "
-        "локальная сессия браузера (`authToken` и SSO Keycloak). Скачанные курсы мгновенно попадают во вкладку «Материалы»."
+        "Все разделы личного кабинета студента НГТУ, структура курсов (включая непройденные темы и фрагменты), "
+        "а также интерактивный разбор и решение заданий по материалам лекций с полным тетрадным оформлением."
     )
 
     _is_cloud_env = importlib.util.find_spec("playwright") is None or sys.platform != "win32"
@@ -786,14 +968,14 @@ with tabs[1]:
     dispace_section = st.segmented_control(
         "Раздел DiSpace НГТУ",
         options=[
-            "📘 Мои курсы",
+            "📘 Мои курсы и прохождение",
             "🏛️ Дисциплины и журнал",
             "📅 События и вебинары",
             "🗂️ Каталог курсов",
             "🧪 Тесты и контрольные",
             "✉️ Сообщения",
         ],
-        default="📘 Мои курсы",
+        default="📘 Мои курсы и прохождение",
         label_visibility="collapsed",
     )
 
@@ -801,8 +983,8 @@ with tabs[1]:
         st.info("Войди в DiSpace НГТУ кнопкой выше, чтобы просматривать разделы и скачивать курсы.")
     else:
         # ----------------------------------------------------- 2.1 Мои курсы
-        if dispace_section == "📘 Мои курсы":
-            st.markdown(f"#### 📘 Мои курсы ([открыть в DiSpace]({MY_COURSES_URL}))")
+        if dispace_section == "📘 Мои курсы и прохождение":
+            st.markdown(f"#### 📘 Мои курсы и прохождение тем/заданий ([открыть в DiSpace]({MY_COURSES_URL}))")
             try:
                 my_courses = dispace_api.list_courses()
             except LoginRequired as exc:
@@ -817,8 +999,11 @@ with tabs[1]:
                     cid = c["id"]
                     c_title = c["title"]
                     disc_badge = f" · дисциплина: **{c['discipline']}**" if c.get("discipline") else ""
-                    already_in_store = len(store.list_sources(c.get("discipline") or c_title)) > 0 or len(store.list_sources(c_title)) > 0
-                    status_icon = "✅ В базе" if already_in_store else "📥 Не скачан"
+                    already_in_store = (
+                        len(store.list_sources(c.get("discipline") or c_title)) > 0
+                        or len(store.list_sources(c_title)) > 0
+                    )
+                    status_icon = "✅ В базе материалов" if already_in_store else "📥 Ещё не скачан в базу"
 
                     with st.container(border=True):
                         st.markdown(f"**#{cid} — {c_title}** ({status_icon}){disc_badge}")
@@ -827,13 +1012,13 @@ with tabs[1]:
                         b_col1, b_col2 = st.columns([1, 1])
                         with b_col1:
                             if st.button(
-                                "📥 Скачать курс в Материалы",
+                                "📥 Скачать весь курс в Материалы",
                                 key=f"imp_course_{cid}",
                                 type="primary",
                                 width="stretch",
                             ):
                                 target_course_name = c.get("discipline") or c_title
-                                prog = st.progress(0.0, text=f"Чтение модулей курса «{c_title}»…")
+                                prog = st.progress(0.0, text=f"Чтение модулей, тем и заданий курса «{c_title}»…")
 
                                 def _cb(idx: int, total: int, item_title: str) -> None:
                                     prog.progress(
@@ -852,8 +1037,8 @@ with tabs[1]:
                                     get_tutor.clear()
                                     prog.progress(1.0, text="Готово!")
                                     st.success(
-                                        f"Курс «{target_course_name}» загружен в Материалы! "
-                                        f"Добавлено/обновлено источников: {len(saved)}."
+                                        f"Курс «{target_course_name}» (включая учебный план и задания) загружен в Материалы! "
+                                        f"Источников: {len(saved)}."
                                     )
                                     st.rerun()
                                 except Exception as exc:
@@ -861,18 +1046,19 @@ with tabs[1]:
 
                         with b_col2:
                             if st.button(
-                                "🔍 Показать структуру и баллы",
+                                "📖 Темы, фрагменты и задания курса",
                                 key=f"struct_course_{cid}",
                                 width="stretch",
                             ):
                                 st.session_state["inspect_course_id"] = cid
+                                st.session_state["inspect_course_name"] = c.get("discipline") or c_title
 
             with col_mc2:
                 st.markdown("**Импорт по прямой ссылке или ID**")
                 with st.form("direct_dispace_import"):
                     direct_url = st.text_input(
                         "Ссылка на курс или тему DiSpace",
-                        placeholder="https://dispace.nstu.ru/course/3121/32823",
+                        placeholder="https://dispace.nstu.ru/course/3121/32637",
                     )
                     direct_course_name = st.text_input(
                         "Название курса в базе (необязательно)",
@@ -914,28 +1100,244 @@ with tabs[1]:
                     except Exception as exc:
                         st.error(f"Ошибка импорта: {exc}")
 
-                inspect_cid = st.session_state.get("inspect_course_id")
-                if inspect_cid:
-                    try:
-                        c_detail = dispace_api.get_course(int(inspect_cid))
-                        c_scores = dispace_api.get_course_scores(int(inspect_cid))
-                        st.markdown(f"##### Структура: {c_detail.get('title')} (#{inspect_cid})")
-                        if c_scores and c_scores.get("total_score") is not None:
-                            st.caption(f"Баллы по курсу: **{c_scores.get('total_score')}**")
-                        for mod in c_detail.get("modules") or []:
-                            if mod.get("hidden"):
-                                continue
-                            with st.expander(f"📦 {mod.get('title')}", expanded=False):
-                                for th in mod.get("themes") or []:
-                                    if th.get("hidden"):
-                                        continue
-                                    tid = th.get("id")
+            # --- Интерактивное прохождение курса: все модули, пройденные и непройденные темы, фрагменты и задания ---
+            inspect_cid = st.session_state.get("inspect_course_id") or (my_courses[0]["id"] if my_courses else None)
+            if inspect_cid:
+                st.divider()
+                try:
+                    overview = dispace_api.get_course_overview(int(inspect_cid))
+                except Exception as exc:
+                    st.error(f"Не удалось загрузить обзор курса: {exc}")
+                    overview = None
+
+                if overview:
+                    tot_th = max(overview["total_themes"], 1)
+                    done_th = overview["passed_themes"]
+                    st.markdown(
+                        f"### 📖 Прохождение курса: **{overview['title']}** (`#{inspect_cid}`)"
+                    )
+                    st.progress(
+                        done_th / tot_th,
+                        text=f"Пройдено тем: {done_th} из {overview['total_themes']} "
+                        f"(осталось пройти: {overview['total_themes'] - done_th})",
+                    )
+
+                    theme_filter = st.radio(
+                        "Фильтр тем курса",
+                        [
+                            "Все темы курса (пройденные, начатые и закрытые)",
+                            "Только непройденные и начатые темы",
+                            "Только пройденные темы",
+                        ],
+                        horizontal=True,
+                        key=f"th_filter_{inspect_cid}",
+                        label_visibility="collapsed",
+                    )
+
+                    for mod in overview.get("modules") or []:
+                        mod_score_str = (
+                            f" · балл: **{mod['score']} / {mod['score_max']}**"
+                            if mod.get("score_max") is not None
+                            else ""
+                        )
+                        mod_icon = "✅" if mod.get("passed") else "⏳"
+                        with st.expander(
+                            f"{mod_icon} Модуль: {mod['title']}{mod_score_str}",
+                            expanded=not mod.get("passed"),
+                        ):
+                            for th in mod.get("themes") or []:
+                                if theme_filter.startswith("Только непройденные") and th["passed"]:
+                                    continue
+                                if theme_filter.startswith("Только пройденные") and not th["passed"]:
+                                    continue
+                                tid = th["id"]
+                                sc_str = (
+                                    f" · балл: `{_fmt_cell(th['score'])} / {_fmt_cell(th['score_max'])}`"
+                                    if th.get("score_max") is not None
+                                    else ""
+                                )
+                                t_col1, t_col2, t_col3 = st.columns([4, 1.4, 1])
+                                with t_col1:
                                     st.markdown(
-                                        f"- `{tid}` {th.get('title')} "
-                                        f"([открыть](https://dispace.nstu.ru/course/{inspect_cid}/{tid}))"
+                                        f"{th['status_badge']} — **{th['title']}** (`#{tid}`){sc_str}"
                                     )
-                    except Exception as exc:
-                        st.error(f"Не удалось загрузить структуру курса: {exc}")
+                                with t_col2:
+                                    if st.button(
+                                        "📂 Открыть теорию и задания",
+                                        key=f"open_th_{inspect_cid}_{tid}",
+                                        type="primary" if not th["passed"] and not th["locked"] else "secondary",
+                                        width="stretch",
+                                    ):
+                                        st.session_state["active_theme_id"] = tid
+                                        st.session_state["active_theme_course_id"] = int(inspect_cid)
+                                        st.session_state["active_theme_module_title"] = mod["title"]
+                                with t_col3:
+                                    st.link_button("🌐 В DiSpace", th["url"], use_container_width=True)
+
+                    active_tid = st.session_state.get("active_theme_id")
+                    active_tcid = st.session_state.get("active_theme_course_id")
+                    if active_tid and active_tcid == int(inspect_cid):
+                        st.divider()
+                        with st.spinner(f"Загружаю все фрагменты и задания темы #{active_tid}…"):
+                            try:
+                                th_detail = dispace_api.get_theme_detailed_blocks(int(inspect_cid), int(active_tid))
+                            except Exception as exc:
+                                st.error(f"Не удалось прочитать фрагменты темы: {exc}")
+                                th_detail = None
+
+                        if th_detail:
+                            blocks = th_detail.get("blocks") or []
+                            passed_blocks = sum(1 for b in blocks if b.get("passed"))
+                            q_blocks = [b for b in blocks if b.get("content_type") in ("question", "task")]
+                            theory_blocks = [b for b in blocks if b.get("content_type") in ("text", "video")]
+
+                            st.markdown(
+                                f"#### 📂 Тема: **{th_detail['title']}** "
+                                f"(фрагментов: `{len(blocks)}`, пройдено: `{passed_blocks}/{len(blocks)}`, "
+                                f"теория: `{len(theory_blocks)}`, заданий: `{len(q_blocks)}`)"
+                            )
+
+                            if th_detail.get("locked") and not blocks:
+                                st.warning(
+                                    "🔒 Эта тема пока закрыта сервером DiSpace: чтобы открыть её фрагменты и задания, "
+                                    f"необходимо сначала завершить предыдущую тему (`#{th_detail.get('restriction_theme_id')}`) в курсе."
+                                )
+                            elif th_detail.get("test_id") and not blocks:
+                                st.info(
+                                    f"🧪 Это контрольный тест (`test_id={th_detail['test_id']}`). "
+                                    "Нажми кнопку ниже, чтобы сгенерировать тренировочный вариант по этой теме в «Тренажёре»."
+                                )
+                                if st.button("🏋️ Сгенерировать тренировку по теме теста", key=f"tr_btn_{active_tid}", type="primary"):
+                                    st.session_state["practice_prefill_topic"] = th_detail["title"]
+                                    st.session_state["practice_prefill_course"] = st.session_state.get("inspect_course_name") or overview["title"]
+                                    st.toast("Тема передана на вкладку «🧪 Тренажёр»!", icon="🧪")
+                            else:
+                                blk_mode = st.radio(
+                                    "Отображать фрагменты темы",
+                                    [
+                                        f"📋 Все фрагменты по порядку ({len(blocks)})",
+                                        f"✏️ Только практические задания ({len(q_blocks)})",
+                                        f"📖 Только теоретические фрагменты ({len(theory_blocks)})",
+                                    ],
+                                    horizontal=True,
+                                    key=f"blk_filter_{active_tid}",
+                                    label_visibility="collapsed",
+                                )
+
+                                combined_theory_text = th_detail.get("combined_theory") or ""
+                                course_rag_name = st.session_state.get("inspect_course_name") or overview["title"]
+
+                                for b in blocks:
+                                    b_type = b["content_type"]
+                                    if blk_mode.startswith("✏️") and b_type not in ("question", "task"):
+                                        continue
+                                    if blk_mode.startswith("📖") and b_type not in ("text", "video"):
+                                        continue
+
+                                    b_idx = b["index"]
+                                    b_id = b["id"]
+                                    p_badge = "✅ Пройден" if b.get("passed") else "⏳ Не пройден"
+                                    type_icon = "✏️" if b_type in ("question", "task") else ("🎬" if b_type == "video" else "📄")
+
+                                    with st.container(border=True):
+                                        st.markdown(f"##### {type_icon} Фрагмент {b_idx}: {b['title']} · *{p_badge}*")
+
+                                        if b_type in ("text", "video"):
+                                            render_rich_content(b.get("text") or "*(пустой фрагмент)*")
+
+                                        elif b_type in ("question", "task"):
+                                            q_data = b.get("question_data") or {}
+                                            q_text = b.get("text") or "*(условие задания не получено)*"
+                                            st.markdown("**📋 Условие задания:**")
+                                            render_rich_content(q_text)
+
+                                            opts = q_data.get("options") or []
+                                            if opts:
+                                                st.markdown("**Варианты ответа:**")
+                                                for o_i, opt in enumerate(opts, 1):
+                                                    render_rich_content(f"**{o_i}.** {opt['text']}")
+
+                                            meta_bits = []
+                                            if q_data.get("max_score") is not None:
+                                                meta_bits.append(
+                                                    f"Балл: `{_fmt_cell(q_data.get('score'))} / {_fmt_cell(q_data.get('max_score'))}`"
+                                                )
+                                            if q_data.get("student_answer"):
+                                                meta_bits.append(f"Твой ответ в DiSpace: `{q_data['student_answer']}`")
+                                            if q_data.get("remaining_attempts") is not None:
+                                                meta_bits.append(f"Осталось попыток: `{q_data['remaining_attempts']}`")
+                                            if meta_bits:
+                                                st.caption(" · ".join(meta_bits))
+
+                                            st.markdown("---")
+                                            sol_c1, sol_c2 = st.columns([2, 1])
+                                            with sol_c1:
+                                                student_try = st.text_input(
+                                                    "✍️ Твой ответ или ход решения (необязательно — для проверки твоего решения)",
+                                                    value=q_data.get("student_answer") or "",
+                                                    placeholder="Введи свой ответ (например: -1/2 или 18*x^(3)), чтобы бот проверил его…",
+                                                    key=f"try_input_{active_tid}_{b_id}",
+                                                )
+                                            with sol_c2:
+                                                st.write("")
+                                                btn_check_own = st.button(
+                                                    "🔍 Проверить мой ответ",
+                                                    key=f"btn_chk_{active_tid}_{b_id}",
+                                                    width="stretch",
+                                                )
+
+                                            btn_notebook = st.button(
+                                                "📓 Решить с моделью (полное тетрадное оформление по материалам лекции)",
+                                                key=f"btn_nb_{active_tid}_{b_id}",
+                                                type="primary",
+                                                width="stretch",
+                                            )
+
+                                            sol_state_key = f"saved_nb_sol_{active_tid}_{b_id}"
+                                            if btn_check_own or btn_notebook:
+                                                status_box = st.empty()
+                                                think_box = st.empty()
+                                                live_box = st.empty()
+                                                last_ts = [0.0]
+
+                                                def _on_nb_stream(kind: str, text_so_far: str, m_name: str) -> None:
+                                                    now = time.perf_counter()
+                                                    if kind != "status" and (now - last_ts[0]) < 0.08:
+                                                        return
+                                                    last_ts[0] = now
+                                                    if kind == "thinking":
+                                                        status_box.caption(f"💭 `{m_name}` просчитывает задание…")
+                                                        with think_box.expander("💭 Размышления модели (в реальном времени)…", expanded=True):
+                                                            st.caption(text_so_far[-2500:])
+                                                    elif kind == "content":
+                                                        status_box.caption(f"📓 `{m_name}` оформляет тетрадное решение…")
+                                                        think_box.empty()
+                                                        live_box.markdown(format_math_markdown(text_so_far) + " ▌")
+
+                                                try:
+                                                    nb_ans = get_tutor().solve_course_assignment(
+                                                        question_text=q_text,
+                                                        options=opts,
+                                                        theme_theory_text=combined_theory_text,
+                                                        course_name=course_rag_name,
+                                                        student_attempt=student_try if btn_check_own else "",
+                                                        on_stream=_on_nb_stream,
+                                                    )
+                                                    status_box.empty()
+                                                    think_box.empty()
+                                                    live_box.empty()
+                                                    st.session_state[sol_state_key] = nb_ans
+                                                except LLMError as exc:
+                                                    status_box.empty()
+                                                    think_box.empty()
+                                                    live_box.empty()
+                                                    st.error(f"Ошибка генерации решения: {exc}")
+
+                                            if st.session_state.get(sol_state_key):
+                                                saved_nb: Answer = st.session_state[sol_state_key]
+                                                with st.container(border=True):
+                                                    st.markdown("##### 📓 Тетрадное решение (на основе лекции курса)")
+                                                    render_assistant_turn({"role": "assistant", "content": saved_nb.text, "answer": saved_nb})
 
         # ------------------------------------------ 2.2 Дисциплины и журнал
         elif dispace_section == "🏛️ Дисциплины и журнал":
@@ -1334,7 +1736,7 @@ with tabs[2]:
             ):
                 for source in course_sources:
                     with st.container(border=True):
-                        cols = st.columns([5, 1, 1])
+                        cols = st.columns([4, 1, 1, 1])
                         with cols[0]:
                             st.markdown(
                                 f"**{source.title}** — `{source.chars:,}` симв., `{len(source.chunk_ids)}` фр.".replace(
@@ -1344,10 +1746,18 @@ with tabs[2]:
                             if source.url:
                                 st.caption(f"Источник: {source.url}")
                         with cols[1]:
+                            if st.button("📖 Читалка", key=f"btn_dlg_{source.id}", width="stretch"):
+                                open_material_reader_dialog(
+                                    title=source.title,
+                                    course=source.course,
+                                    url=source.url,
+                                    text=store.get_source_text(source.id),
+                                )
+                        with cols[2]:
                             preview_key = f"prev_toggle_{source.id}"
                             if st.button("👁️ Текст", key=f"btn_prev_{source.id}", width="stretch"):
                                 st.session_state[preview_key] = not st.session_state.get(preview_key, False)
-                        with cols[2]:
+                        with cols[3]:
                             if st.button("🗑️ Удалить", key=f"del_{source.id}", width="stretch"):
                                 store.remove_source(source.id)
                                 store.reload()
@@ -1356,28 +1766,96 @@ with tabs[2]:
 
                         if st.session_state.get(f"prev_toggle_{source.id}", False):
                             full_text = store.get_source_text(source.id)
-                            view_mode = st.radio(
-                                "Режим просмотра",
-                                ["📐 Форматированный (формулы LaTeX, фото, видео)", "📄 Исходный текст"],
-                                horizontal=True,
-                                key=f"view_mode_{source.id}",
-                                label_visibility="collapsed",
-                            )
+                            page_size = 8000
+                            total_pages = max(1, (len(full_text) + page_size - 1) // page_size)
+                            page_key = f"mat_page_{source.id}"
+                            cur_page = int(st.session_state.get(page_key, 1))
+                            cur_page = max(1, min(cur_page, total_pages))
+
+                            ctrl1, ctrl2, ctrl3 = st.columns([3, 2, 2])
+                            with ctrl1:
+                                view_mode = st.radio(
+                                    "Режим просмотра",
+                                    ["📐 Форматированный (формулы LaTeX, фото, видео)", "📄 Исходный текст"],
+                                    horizontal=True,
+                                    key=f"view_mode_{source.id}",
+                                    label_visibility="collapsed",
+                                )
+                            with ctrl2:
+                                show_all_pages = st.checkbox(
+                                    f"Показать весь текст целиком ({len(full_text):,} симв.)".replace(",", " "),
+                                    value=(total_pages == 1),
+                                    key=f"show_all_{source.id}",
+                                )
+                            with ctrl3:
+                                if not show_all_pages and total_pages > 1:
+                                    nav_b1, nav_b2, nav_b3 = st.columns([1, 2, 1])
+                                    with nav_b1:
+                                        if st.button(
+                                            "⬅️ Назад",
+                                            key=f"prev_p_{source.id}",
+                                            disabled=(cur_page <= 1),
+                                            width="stretch",
+                                        ):
+                                            st.session_state[page_key] = cur_page - 1
+                                            st.rerun()
+                                    with nav_b2:
+                                        st.caption(f"Стр. **{cur_page}** из **{total_pages}**")
+                                    with nav_b3:
+                                        if st.button(
+                                            "Далее ➡️",
+                                            key=f"next_p_{source.id}",
+                                            disabled=(cur_page >= total_pages),
+                                            width="stretch",
+                                        ):
+                                            st.session_state[page_key] = cur_page + 1
+                                            st.rerun()
+
+                            if show_all_pages:
+                                slice_text = full_text
+                            else:
+                                start_idx = (cur_page - 1) * page_size
+                                end_idx = min(len(full_text), cur_page * page_size)
+                                slice_text = full_text[start_idx:end_idx]
+
                             if view_mode.startswith("📐"):
                                 with st.container(border=True):
-                                    render_rich_content(
-                                        full_text[:12000]
-                                        + ("\n\n*… [показаны первые 12 000 символов]*" if len(full_text) > 12000 else "")
-                                    )
+                                    render_rich_content(slice_text)
                             else:
                                 st.text_area(
                                     "Содержимое источника",
-                                    value=full_text[:12000]
-                                    + ("\n\n… [показаны первые 12000 символов]" if len(full_text) > 12000 else ""),
-                                    height=260,
+                                    value=slice_text,
+                                    height=320,
                                     disabled=True,
-                                    key=f"ta_prev_{source.id}",
+                                    key=f"ta_prev_{source.id}_{cur_page}_{show_all_pages}",
                                 )
+
+                            if not show_all_pages and total_pages > 1:
+                                b_nav1, b_nav2, b_nav3 = st.columns([1, 2, 1])
+                                with b_nav1:
+                                    if st.button(
+                                        "⬅️ Предыдущая страница",
+                                        key=f"b_prev_p_{source.id}",
+                                        disabled=(cur_page <= 1),
+                                        width="stretch",
+                                    ):
+                                        st.session_state[page_key] = cur_page - 1
+                                        st.rerun()
+                                with b_nav2:
+                                    st.caption(
+                                        f"Показаны символы {(cur_page - 1) * page_size + 1:,}–{min(len(full_text), cur_page * page_size):,} из {len(full_text):,} (стр. {cur_page}/{total_pages})".replace(
+                                            ",", " "
+                                        )
+                                    )
+                                with b_nav3:
+                                    if st.button(
+                                        "Следующая страница ➡️",
+                                        key=f"b_next_p_{source.id}",
+                                        disabled=(cur_page >= total_pages),
+                                        width="stretch",
+                                    ):
+                                        st.session_state[page_key] = cur_page + 1
+                                        st.rerun()
 
 
 # ============================================================= 4. КОНСПЕКТЫ
@@ -1408,7 +1886,7 @@ with tabs[3]:
             with col2:
                 st.caption(
                     f"{selected.chars} символов, {len(selected.chunk_ids)} фрагментов. "
-                    "Каждый тезис получит ссылку `[#N]` на конкретный фрагмент лекции."
+                    "Генерация идёт в реальном времени, каждый тезис получает ссылку `[#N]` на фрагмент."
                 )
 
             note_path = store.notes_dir / slugify(selected_course) / f"{slugify(selected.title)}.md"
@@ -1416,27 +1894,54 @@ with tabs[3]:
             if rebuild:
                 builder = NoteBuilder(get_tutor().llm, store)
                 progress = st.progress(0.0, text="Готовлю фрагменты…")
+                live_note_box = st.empty()
+                _last_note_ui = [0.0]
 
                 def on_progress(position: int, total: int, chunk) -> None:
-                    progress.progress(position / max(total, 1), text=f"Обрабатываю фрагмент {position} из {total}…")
+                    progress.progress(
+                        position / max(total, 1),
+                        text=f"✍️ Конспектирую в реальном времени: фрагмент {position} из {total}…",
+                    )
+
+                def on_note_stream(partial_md: str) -> None:
+                    now = time.perf_counter()
+                    if now - _last_note_ui[0] >= 0.08:
+                        _last_note_ui[0] = now
+                        live_note_box.markdown(format_math_markdown(partial_md) + " ▌")
 
                 try:
-                    result = builder.build(selected, on_progress=on_progress)
+                    result = builder.build(
+                        selected,
+                        on_progress=on_progress,
+                        on_stream=on_note_stream,
+                    )
                 except (LLMError, ValueError) as exc:
                     st.error(f"Не удалось собрать конспект: {exc}")
                 else:
+                    live_note_box.empty()
                     progress.progress(1.0, text="Готово")
                     st.success(result.summary_line())
                     st.rerun()
 
             if note_path.exists():
                 note_md = note_path.read_text(encoding="utf-8")
-                st.download_button(
-                    "📥 Скачать конспект (.md)",
-                    data=note_md,
-                    file_name=note_path.name,
-                    mime="text/markdown",
-                )
+                dl_c1, dl_c2 = st.columns([1, 1])
+                with dl_c1:
+                    st.download_button(
+                        "📥 Скачать конспект (.md)",
+                        data=note_md,
+                        file_name=note_path.name,
+                        mime="text/markdown",
+                        width="stretch",
+                    )
+                with dl_c2:
+                    if st.button("📖 Открыть конспект в окне читалки", key="open_note_dlg", width="stretch"):
+                        open_material_reader_dialog(
+                            title=f"Конспект: {selected.title}",
+                            course=selected_course,
+                            url=selected.url,
+                            text=note_md,
+                        )
                 with st.container(border=True):
                     render_rich_content(note_md)
             else:
@@ -1446,7 +1951,7 @@ with tabs[3]:
 # ============================================================== 5. ТРЕНАЖЁР
 
 with tabs[4]:
-    st.subheader("🧪 Тренажёр: генерация вариантов с самопроверкой")
+    st.subheader("🧪 Тренажёр: генерация вариантов с самопроверкой и тетрадным решением")
     store = sync_materials()
 
     prefill_topic = st.session_state.get("practice_prefill_topic", "")
@@ -1474,29 +1979,63 @@ with tabs[4]:
         with col4:
             difficulty = st.selectbox("Уровень", ["лёгкий", "средний", "сложный"], index=1)
 
-        verify_all = st.toggle(
-            "Проверить эталонные решения (SymPy пересчитает ответ, вторая модель проверит ход)",
-            value=True,
-        )
-        generate = st.form_submit_button("Сгенерировать вариант", type="primary", width="stretch")
+        opt_c1, opt_c2 = st.columns(2)
+        with opt_c1:
+            verify_all = st.toggle(
+                "Мгновенная математическая проверка эталонов (SymPy)",
+                value=True,
+            )
+        with opt_c2:
+            deep_think_practice = st.toggle(
+                "Глубокие размышления (<think>, медленнее, для олимпиадных задач)",
+                value=False,
+            )
+        generate = st.form_submit_button("⚡ Сгенерировать вариант (в реальном времени)", type="primary", width="stretch")
 
     if generate and topic.strip():
-        with st.spinner("Составляю задания по материалам курса и проверяю эталоны…"):
-            try:
-                tasks, reports = get_tutor().practice(
-                    topic=topic.strip(),
-                    count=count,
-                    difficulty=difficulty,
-                    course=None if p_course == "Все курсы" else p_course,
-                    verify=verify_all,
-                )
-            except LLMError as exc:
-                st.error(f"Модель недоступна: {exc}")
-                tasks, reports = [], []
-        st.session_state.practice = (topic.strip(), tasks, reports, difficulty)
+        stream_status = st.empty()
+        stream_preview = st.empty()
+        _last_pr_ui = [0.0]
+
+        def _on_practice_stream(thinking_part: str, content_part: str) -> None:
+            now = time.perf_counter()
+            if now - _last_pr_ui[0] < 0.08:
+                return
+            _last_pr_ui[0] = now
+            if content_part.strip():
+                stream_status.caption("✍️ Модель генерирует условия и тетрадные решения в реальном времени…")
+                stream_preview.code(content_part[-1600:] + " ▌", language="json")
+            elif thinking_part.strip():
+                stream_status.caption(f"💭 Размышления модели ({len(thinking_part)} симв.)…")
+
+        try:
+            tasks, reports = get_tutor().practice(
+                topic=topic.strip(),
+                count=count,
+                difficulty=difficulty,
+                course=None if p_course == "Все курсы" else p_course,
+                verify=verify_all,
+                on_stream=_on_practice_stream,
+                deep_think=deep_think_practice,
+            )
+        except LLMError as exc:
+            st.error(f"Модель недоступна: {exc}")
+            tasks, reports = [], []
+        finally:
+            stream_status.empty()
+            stream_preview.empty()
+        st.session_state.practice = (
+            topic.strip(),
+            tasks,
+            reports,
+            difficulty,
+            None if p_course == "Все курсы" else p_course,
+        )
 
     if st.session_state.get("practice"):
-        p_topic, tasks, reports, p_diff = st.session_state.practice
+        prac_tuple = st.session_state.practice
+        p_topic, tasks, reports, p_diff = prac_tuple[0], prac_tuple[1], prac_tuple[2], prac_tuple[3]
+        p_selected_course = prac_tuple[4] if len(prac_tuple) > 4 else None
         st.caption(f"Тема: **{p_topic}** · уровень: {p_diff} · заданий: {len(tasks)}")
         if not tasks:
             st.warning("Задания не распознаны в ответе модели. Попробуй сформулировать тему конкретнее.")
@@ -1512,7 +2051,75 @@ with tabs[4]:
             with st.container(border=True):
                 render_rich_content(f"**Задание {i}.** {task_item['statement']}")
                 st.caption(f"Уровень: {task_item.get('difficulty') or p_diff}{badge}")
-                with st.expander("Показать эталонное решение и ответ"):
+
+                user_prac_ans = st.text_input(
+                    f"Твой ответ к заданию {i} (для самопроверки):",
+                    key=f"prac_ans_{i}",
+                    placeholder="Введи ответ или ход решения…",
+                )
+                pr_btn1, pr_btn2 = st.columns(2)
+                with pr_btn1:
+                    check_prac = st.button(
+                        "🔍 Проверить мой ответ",
+                        key=f"btn_prac_chk_{i}",
+                        width="stretch",
+                    )
+                with pr_btn2:
+                    notebook_prac = st.button(
+                        "📓 Полное тетрадное решение по лекции",
+                        key=f"btn_prac_nb_{i}",
+                        type="primary",
+                        width="stretch",
+                    )
+
+                prac_sol_key = f"prac_nb_sol_{i}"
+                if check_prac and user_prac_ans.strip():
+                    live_p_box = st.empty()
+                    _last_p_t = [0.0]
+
+                    def _on_p_chk(thinking: str, content: str) -> None:
+                        now = time.perf_counter()
+                        if now - _last_p_t[0] >= 0.08 and content.strip():
+                            _last_p_t[0] = now
+                            live_p_box.markdown(format_math_markdown(content) + " ▌")
+
+                    res_chk = get_tutor().solve_course_assignment(
+                        question_title=f"Тренажёр — Задание {i} ({p_topic})",
+                        question_text=task_item["statement"],
+                        course_name=p_selected_course,
+                        student_answer=user_prac_ans.strip(),
+                        mode="check",
+                        on_stream=_on_p_chk,
+                    )
+                    live_p_box.empty()
+                    st.session_state[prac_sol_key] = res_chk
+
+                if notebook_prac:
+                    live_p_box = st.empty()
+                    _last_p_t = [0.0]
+
+                    def _on_p_nb(thinking: str, content: str) -> None:
+                        now = time.perf_counter()
+                        if now - _last_p_t[0] >= 0.08 and content.strip():
+                            _last_p_t[0] = now
+                            live_p_box.markdown(format_math_markdown(content) + " ▌")
+
+                    res_nb = get_tutor().solve_course_assignment(
+                        question_title=f"Тренажёр — Задание {i} ({p_topic})",
+                        question_text=task_item["statement"],
+                        course_name=p_selected_course,
+                        mode="solve",
+                        on_stream=_on_p_nb,
+                    )
+                    live_p_box.empty()
+                    st.session_state[prac_sol_key] = res_nb
+
+                if st.session_state.get(prac_sol_key):
+                    sol_turn = st.session_state[prac_sol_key]
+                    with st.container(border=True):
+                        render_rich_content(sol_turn.answer)
+
+                with st.expander("Показать краткое эталонное решение и ответ из генератора"):
                     render_rich_content(f"**Ответ:** {task_item.get('answer') or '—'}")
                     if task_item.get("solution"):
                         render_rich_content(task_item["solution"])

@@ -299,3 +299,96 @@ $\forall \;\varepsilon >0 \;\exists\;\delta >0 \;\forall \;x:0<\left| x-{{x}_{0}
 $\forall \;\varepsilon >0 \;\exists\;\delta >0 \;\forall \;x:0<\left| x-{{x}_{0}} \right|<\delta \Rightarrow \left| f\left( x \right)-A \right|<\varepsilon$.
 
 что означает, что$f\left( x \right)-A$ - бесконечно малая. Обозначим $f\left( x \right)-A=\alpha \left( x \right)$, тогда $f\left( x \right)=A+\alpha \left( x \right)$, где $\alpha \left( x \right)\to 0$ при $x\to {{x}_{0}}$. #
+
+### ✏️ Практические задания по теме
+
+#### ✏️ Задание №1 (✅ пройдено)
+
+Выберите точки, принадлежащие $U_\varepsilon(x_0)$, если $x_0=1$, $\varepsilon=0,1$
+
+Варианты ответа:
+- $x=1,05$
+- $x=0,85$
+- $x=0,95$
+- $x=1,15$
+- $x=-0,95$
+
+*Текущий ответ в DiSpace:* `$x=1,05$, $x=0,95$`
+
+---
+
+#### ✏️ Задание №2 (✅ пройдено)
+
+Расположите предложения в соответствии с определением предела функции $\lim\limits_{x\to {3}}f\left( x \right)=5$
+
+Варианты ответа:
+- для любого $x$, удовлетворяющего условию $0 < |x - 3| < δ$
+- существует $δ$-окрестность точки $3$ такая, что
+- для любой сколь угодно малой $ε$-окрестности точки $5$
+- соответствующие значения $f(x)$ удовлетворяют условию $|f(x) - 5| < ε$
+
+*Текущий ответ в DiSpace:* `для любой сколь угодно малой $ε$-окрестности точки $5$, существует $δ$-окрестность точки $3$ такая, что, для любого $x$, удовлетворяющего условию $0 < |x - 3| < δ$, соответствующие значения $f(x)$ удовлетворяют условию $|f(x) - 5| < ε$`
+
+---
+
+#### ✏️ Задание №3 (✅ пройдено)
+
+Расположите высказывания в соответствии с определением предела функции $\lim\limits_{x\to {-1}}f\left( x \right)=3$
+
+Варианты ответа:
+- $\exists \delta >0$
+- $\left| f(x)-3 \right| < \varepsilon$
+- $\forall \varepsilon >0$
+- $\forall x:0 < \left| x+1 \right| < \delta$
+
+*Текущий ответ в DiSpace:* `$\forall \varepsilon >0$, $\exists \delta >0$, $\forall x:0 < \left| x+1 \right| < \delta$, $\left| f(x)-3 \right| < \varepsilon$`
+
+---
+
+#### ✏️ Задание №4 (✅ пройдено)
+
+Определите по рисунку значение предела функции в точке $4$ слева
+
+![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/996d6e2b-00cb-4742-86ec-e3d3bbf768a8.jpeg)
+
+*Текущий ответ в DiSpace:* `5`
+
+---
+
+#### ✏️ Задание №5 (✅ пройдено)
+
+Укажите для изображения соответствующее высказывание
+
+![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/302930e3-f8ad-40ea-bb90-31e35fb6bbe3.png)
+
+Варианты ответа:
+- $\mathop {\lim }\limits_{x \to 0} f\left( x \right) =2$
+- $\mathop {\lim }\limits_{x \to -\infty} f\left( x \right) =-2$
+- $\mathop {\lim }\limits_{x \to 2} f\left( x \right) =- \infty$
+- $\mathop {\lim }\limits_{x \to -\infty } f\left( x \right) =2$
+
+*Текущий ответ в DiSpace:* `$\mathop {\lim }\limits_{x \to 2} f\left( x \right) =- \infty$`
+
+---
+
+#### ✏️ Задание №6 (✅ пройдено)
+
+Выберите графическое представление предела функции:
+
+$\mathop {\lim }\limits_{x \to 0 } f\left( x \right) = + \infty$
+
+Варианты ответа:
+- ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/8f6b4e0a-eecb-4518-b1e5-42ba7fcb5fc3.png)
+- ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/65ca2ae4-379b-45d1-a953-745010b89bb3.png)
+- ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/ad3e6728-5968-4fd1-b61b-609524a88609.png)
+- ![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/21fd3cc1-cdb3-4687-957a-7d8f19841022.png)
+
+*Текущий ответ в DiSpace:* `![Иллюстрация](https://minio.k8s.edu.nstu.ru/dicourse-prod/65ca2ae4-379b-45d1-a953-745010b89bb3.png)`
+
+---
+
+#### ✏️ Задание №7 (✅ пройдено)
+
+Пусть $\mathop {\lim }\limits_{x \to 1} f\left( x \right) = 4$, $\mathop {\lim }\limits_{x \to 1} g\left( x \right) = 2$, найдите предел $\mathop {\lim }\limits_{x \to 1} \frac{{{f^2}\left( x \right)}}{{g\left( x \right)}}$
+
+*Текущий ответ в DiSpace:* `8`
