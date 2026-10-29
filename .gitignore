@@ -1,7 +1,10 @@
-# Сессия браузера содержит токены — не публиковать!
+# Сессия браузера и ключи удалённого шлюза содержат токены — не публиковать!
 data/browser_profile/
 data/browser_state.json
 data/browser_session_storage.json
+data/gateway_token.txt
+data/gateway_state.json
+data/bin/
 
 # Вспомогательные директории агентов/IDE
 .agents/

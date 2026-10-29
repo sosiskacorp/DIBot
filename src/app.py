@@ -27,7 +27,15 @@ import streamlit as st
 
 # Поддержка st.secrets для бесплатного деплоя в Streamlit Community Cloud
 try:
-    for _sec_key in ("OLLAMA_BASE_URL", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "DISPACE_AUTH_TOKEN"):
+    for _sec_key in (
+        "OLLAMA_BASE_URL",
+        "OLLAMA_API_KEY",
+        "DIBOT_GATEWAY_TOKEN",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_MODEL",
+        "DISPACE_AUTH_TOKEN",
+    ):
         if _sec_key in st.secrets and not os.environ.get(_sec_key):
             os.environ[_sec_key] = str(st.secrets[_sec_key])
 except Exception:
@@ -134,12 +142,25 @@ def sync_materials() -> MaterialStore:
 
 
 def ollama_status() -> dict[str, Any]:
-    """Быстрый статус сервера Ollama и загруженных в VRAM моделей."""
+    """Быстрый статус сервера Ollama (локального или через защищённый HTTPS-шлюз)."""
+    base_url = (os.environ.get("OLLAMA_BASE_URL", "").strip() or "http://localhost:11434").rstrip("/")
+    api_key = (
+        os.environ.get("OLLAMA_API_KEY", "").strip()
+        or os.environ.get("DIBOT_GATEWAY_TOKEN", "").strip()
+    )
+    headers: dict[str, str] = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+        headers["X-DIBot-Token"] = api_key
+
     try:
-        tags = requests.get("http://localhost:11434/api/tags", timeout=3).json()
-        ps = requests.get("http://localhost:11434/api/ps", timeout=3).json()
+        tags_resp = requests.get(f"{base_url}/api/tags", headers=headers, timeout=4)
+        tags_resp.raise_for_status()
+        tags = tags_resp.json()
+        ps_resp = requests.get(f"{base_url}/api/ps", headers=headers, timeout=4)
+        ps = ps_resp.json() if ps_resp.ok else {}
     except requests.RequestException as exc:
-        return {"ok": False, "error": str(exc), "models": [], "loaded": []}
+        return {"ok": False, "base_url": base_url, "error": str(exc), "models": [], "loaded": []}
     loaded = [
         {
             "name": m.get("name"),
@@ -151,7 +172,9 @@ def ollama_status() -> dict[str, Any]:
     ]
     return {
         "ok": True,
-        "models": [m["name"] for m in tags.get("models", [])],
+        "base_url": base_url,
+        "is_remote": "localhost" not in base_url and "127.0.0.1" not in base_url,
+        "models": [m["name"] for m in tags.get("models", []) if "name" in m],
         "loaded": loaded,
     }
 
@@ -226,31 +249,58 @@ with st.sidebar:
         st.metric("Фрагментов", stats["chunks"])
 
     if status["ok"]:
-        st.success(f"Ollama: {len(status['models'])} моделей готово")
+        conn_label = "Удалённый шлюз RTX 4060" if status.get("is_remote") else "Локальный Ollama"
+        st.success(f"{conn_label}: {len(status['models'])} моделей готово")
     elif os.environ.get("OPENAI_API_KEY"):
         st.success(f"Облачный ИИ: {os.environ.get('OPENAI_MODEL', 'llama-3.3-70b-versatile')}")
     else:
-        st.warning("Локальный Ollama не отвечает (облачный режим)")
-        with st.expander("☁️ Подключить бесплатный облачный API / туннель", expanded=True):
-            cloud_key = st.text_input(
-                "API-ключ (Groq / OpenRouter / Gemini)",
-                type="password",
-                placeholder="gsk_... или sk-or-...",
-            )
-            cloud_url = st.text_input(
-                "Base URL",
-                value=os.environ.get("OPENAI_BASE_URL", "https://api.groq.com/openai/v1"),
-            )
-            cloud_mod = st.text_input(
-                "Модель",
-                value=os.environ.get("OPENAI_MODEL", "llama-3.3-70b-versatile"),
-            )
-            if st.button("Применить ключ", width="stretch") and cloud_key.strip():
-                os.environ["OPENAI_API_KEY"] = cloud_key.strip()
-                os.environ["OPENAI_BASE_URL"] = cloud_url.strip()
-                os.environ["OPENAI_MODEL"] = cloud_mod.strip()
-                get_tutor.clear()
-                st.rerun()
+        st.warning("Модели не подключены (укажи адрес шлюза RTX 4060 ниже)")
+
+    with st.expander("🔒 Подключение к своей RTX 4060 с другого устройства", expanded=not status["ok"]):
+        st.caption(
+            "Введи HTTPS-ссылку и секретный токен из вкладки «⚙️ Модели» на домашнем ПК "
+            "(или пропиши их один раз в Secrets на Streamlit Cloud)."
+        )
+        remote_ollama_url = st.text_input(
+            "HTTPS URL шлюза (OLLAMA_BASE_URL)",
+            value=os.environ.get("OLLAMA_BASE_URL", ""),
+            placeholder="https://xxxx-xxxx.trycloudflare.com",
+        )
+        remote_ollama_key = st.text_input(
+            "Секретный токен (OLLAMA_API_KEY)",
+            value=os.environ.get("OLLAMA_API_KEY", ""),
+            type="password",
+            placeholder="dibot_sk_...",
+        )
+        if st.button("Подключить локальные модели", type="primary", width="stretch"):
+            if remote_ollama_url.strip():
+                os.environ["OLLAMA_BASE_URL"] = remote_ollama_url.strip().rstrip("/")
+            if remote_ollama_key.strip():
+                os.environ["OLLAMA_API_KEY"] = remote_ollama_key.strip()
+            get_tutor.clear()
+            st.rerun()
+
+        st.divider()
+        st.caption("Резервный облачный API (если домашний ПК выключен):")
+        cloud_key = st.text_input(
+            "API-ключ (Groq / OpenRouter)",
+            type="password",
+            placeholder="gsk_... или sk-or-...",
+        )
+        cloud_url = st.text_input(
+            "Base URL",
+            value=os.environ.get("OPENAI_BASE_URL", "https://api.groq.com/openai/v1"),
+        )
+        cloud_mod = st.text_input(
+            "Модель",
+            value=os.environ.get("OPENAI_MODEL", "llama-3.3-70b-versatile"),
+        )
+        if st.button("Сохранить резервный API", width="stretch") and cloud_key.strip():
+            os.environ["OPENAI_API_KEY"] = cloud_key.strip()
+            os.environ["OPENAI_BASE_URL"] = cloud_url.strip()
+            os.environ["OPENAI_MODEL"] = cloud_mod.strip()
+            get_tutor.clear()
+            st.rerun()
 
     if status["loaded"]:
         for item in status["loaded"]:
@@ -1225,6 +1275,109 @@ with tabs[5]:
             st.markdown("**Сейчас загружено в VRAM:**")
             for item in status["loaded"]:
                 st.caption(f"• `{item['name']}` · {item['size_gb']} ГБ · {item['processor']}")
+
+    st.divider()
+    st.markdown("### 🔒 Безопасный удалённый доступ к локальным моделям (RTX 4060 Gateway)")
+    st.caption(
+        "Позволяет подключаться к твоим локальным моделям (`qwen3.5:9b`, `deepseek-r1:8b`, `qwen3-vl:8b`, `qwen2.5-coder:7b`) "
+        "из задеплоенного приложения в Streamlit Cloud, с телефона или ноутбука. "
+        "Вместо прямого открытия порта Ollama используется защищённый прокси-шлюз с 256-битным токеном, "
+        "защитой от перебора (rate-limit) и жёсткой блокировкой удаления/скачивания моделей."
+    )
+
+    gw_state_file = PROJECT_ROOT / "data" / "gateway_state.json"
+    gw_token_file = PROJECT_ROOT / "data" / "gateway_token.txt"
+    gw_state: dict[str, Any] = {}
+    if gw_state_file.exists():
+        try:
+            import json as _json
+
+            gw_state = _json.loads(gw_state_file.read_text(encoding="utf-8"))
+        except Exception:
+            gw_state = {}
+
+    gw_token = gw_token_file.read_text(encoding="utf-8").strip() if gw_token_file.exists() else ""
+    gw_public_url = str(gw_state.get("public_url") or "")
+
+    # Проверим, отвечает ли локальный шлюз на 127.0.0.1:11435
+    gw_alive = False
+    if gw_token:
+        try:
+            r_gw = requests.get(
+                "http://127.0.0.1:11435/health",
+                headers={"Authorization": f"Bearer {gw_token}"},
+                timeout=1.5,
+            )
+            gw_alive = r_gw.status_code == 200
+        except requests.RequestException:
+            gw_alive = False
+
+    gw_col1, gw_col2 = st.columns([2, 3])
+    with gw_col1:
+        if gw_alive and gw_public_url:
+            st.success(f"🟢 Защищённый туннель активен\n\n`{gw_public_url}`")
+        elif gw_alive:
+            st.info("🟡 Локальный шлюз (127.0.0.1:11435) запущен, ожидание HTTPS-туннеля Cloudflare…")
+        else:
+            st.warning("⚪ Удалённый шлюз на этом ПК сейчас не запущен")
+
+        if st.button("🚀 Запустить / перезапустить защищённый HTTPS-туннель", type="primary", width="stretch"):
+            subprocess.Popen(
+                [sys.executable, str(PROJECT_ROOT / "scripts" / "secure_ollama_gateway.py")],
+                cwd=str(PROJECT_ROOT),
+            )
+            import time as _time
+
+            with st.spinner("Поднимаю защищённый шлюз (11435) и HTTPS-туннель Cloudflare…"):
+                for _ in range(25):
+                    _time.sleep(0.5)
+                    if gw_state_file.exists():
+                        try:
+                            import json as _json
+
+                            st_data = _json.loads(gw_state_file.read_text(encoding="utf-8"))
+                            if st_data.get("public_url"):
+                                break
+                        except Exception:
+                            pass
+            st.rerun()
+
+        if st.button("🔑 Перевыпустить секретный 256-битный токен", width="stretch"):
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(PROJECT_ROOT / "scripts" / "secure_ollama_gateway.py"),
+                    "--rotate-token",
+                    "--no-tunnel",
+                ],
+                cwd=str(PROJECT_ROOT),
+                timeout=3,
+            )
+            st.success("Токен перевыпущен! Перезапусти туннель кнопкой выше.")
+            st.rerun()
+
+    with gw_col2:
+        if gw_token:
+            st.markdown("**Готовый блок для `Settings → Secrets` в Streamlit Cloud:**")
+            st.caption(
+                "Скопируй и вставь это в настройках своего приложения на `share.streamlit.io` "
+                "(или введи в боковой панели на телефоне/ноутбуке):"
+            )
+            from lms_reader import load_auth_token
+
+            local_dispace_jwt = load_auth_token() or ""
+            secrets_toml = (
+                f'OLLAMA_BASE_URL = "{gw_public_url or "https://ЗАПУСТИ-ТУННЕЛЬ-СЛЕВА.trycloudflare.com"}"\n'
+                f'OLLAMA_API_KEY = "{gw_token}"\n'
+            )
+            if local_dispace_jwt:
+                secrets_toml += f'DISPACE_AUTH_TOKEN = "{local_dispace_jwt}"\n'
+            st.code(secrets_toml, language="toml")
+        else:
+            st.info(
+                "Нажми **«🚀 Запустить / перезапустить защищённый HTTPS-туннель»** слева — "
+                "сгенерируется криптостойкий 256-битный токен `dibot_sk_...` и публичный HTTPS-адрес."
+            )
 
     st.divider()
     if st.button("🩺 Запустить полную диагностику Ollama"):

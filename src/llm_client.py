@@ -101,6 +101,11 @@ class LLMClient:
         ollama_cfg = config.get("ollama") or {}
         env_ollama = os.environ.get("OLLAMA_BASE_URL", "").strip()
         self.base_url = (base_url or env_ollama or ollama_cfg.get("base_url") or "http://localhost:11434").rstrip("/")
+        self.ollama_api_key = (
+            os.environ.get("OLLAMA_API_KEY", "").strip()
+            or os.environ.get("DIBOT_GATEWAY_TOKEN", "").strip()
+            or str(ollama_cfg.get("api_key") or "").strip()
+        )
         self.timeout = float(timeout or ollama_cfg.get("request_timeout") or 600)
         self.keep_alive = ollama_cfg.get("keep_alive", "5m")
         self._cache_ttl = float(ollama_cfg.get("model_cache_ttl") or 30)
@@ -122,6 +127,13 @@ class LLMClient:
         self._models_cache: dict[str, list[str]] | None = None
         self._models_cached_at = 0.0
         self._session = requests.Session()
+        if self.ollama_api_key:
+            self._session.headers.update(
+                {
+                    "Authorization": f"Bearer {self.ollama_api_key}",
+                    "X-DIBot-Token": self.ollama_api_key,
+                }
+            )
 
     # ------------------------------------------------------------- конфиг
 
