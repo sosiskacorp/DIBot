@@ -145,6 +145,7 @@ class Tutor:
         history: Sequence[dict[str, str]] | None = None,
         task: str | None = None,
         images: Sequence[str | Path | bytes] | None = None,
+        on_stream: Any = None,
     ) -> Answer:
         started = time.perf_counter()
         clean_question = (question or "").strip() or "Разбери и реши задание на изображении."
@@ -153,6 +154,11 @@ class Tutor:
 
         # Шаг 1: если прикреплены фото, распознаём текст и формулы через vision-модель (qwen3-vl)
         if images:
+            if on_stream is not None:
+                try:
+                    on_stream("status", "👁️ Распознаю формулы и текст с изображения (qwen3-vl)…", "qwen3-vl:8b")
+                except Exception:
+                    pass
             vision_prompt = (
                 "Перепиши условие задачи, текст и все формулы (в LaTeX) с изображения."
                 if not question.strip()
@@ -246,6 +252,7 @@ class Tutor:
             task=resolved_task if not pass_images else "vision",
             text_hint=combined_query,
             images=pass_images,
+            on_stream=on_stream,
         )
         answer_text = format_math_markdown(_strip_prompt_echo(result.text, TUTOR_SYSTEM))
 
@@ -255,7 +262,7 @@ class Tutor:
             else result.model
         )
 
-        # Проверка (SymPy + кросс-модель) запускается только для расчётных/кодовых задач, а не для обычного диалога!
+        # Проверка (SymPy) запускается для расчётных/кодовых задач в фоне за <0.05 с без выгрузки модели из VRAM
         should_verify = (
             (resolved_task in self.verify_tasks)
             if verify is None
@@ -267,6 +274,7 @@ class Tutor:
                 problem=combined_query,
                 solution=answer_text,
                 solver_model=result.model,
+                use_model=False,
             )
 
         return Answer(

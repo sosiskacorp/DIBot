@@ -316,7 +316,7 @@ class OllamaGatewayHandler(BaseHTTPRequestHandler):
                                 ).encode("utf-8")
                                 line_q.put(err_payload + b"\n")
                                 return
-                            for chunk in resp.iter_lines():
+                            for chunk in resp.iter_lines(chunk_size=1):
                                 if chunk:
                                     line_q.put(chunk + b"\n")
                     except Exception as exc:

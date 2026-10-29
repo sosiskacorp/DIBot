@@ -599,22 +599,30 @@ def sympy_layer(problem: str, answer: str) -> Check:
 # ------------------------------------------------------- слой кросс-модели
 
 
-JUDGE_SYSTEM = """Ты — строгий экзаменатор. Тебе дают условие и чужое решение.
-Твоя задача — найти ошибки, а не согласиться.
+JUDGE_SYSTEM = """Ты — объективный математический экзаменатор. Тебе дают условие и чужое решение.
+Твоя задача — проверить правильность вычислений и итогового ответа.
 
-Проверяй по порядку:
-1. Правильно ли понято условие.
-2. Верны ли промежуточные шаги (пересчитай ключевые).
-3. Следует ли ответ из условия.
-4. Нет ли потерянных корней, знаков, единиц измерения.
+Правила:
+1. Пересчитай ключевые арифметические и алгебраические переходы и итоговый ответ.
+2. НЕ считай ошибкой выбор обозначений (например, \\Delta_{x_1}/\\Delta_{x_2} вместо \\Delta_x/\\Delta_y), оформление или подробность записи, если вычисления и итоговый ответ верны!
+3. В поле issues пиши обычный читаемый текст без слэшей LaTeX.
 
 Отвечай ТОЛЬКО JSON без пояснений вокруг:
 {"verdict": "correct" | "incorrect" | "uncertain",
- "issues": ["конкретная ошибка", ...],
+ "issues": ["конкретная арифметическая ошибка", ...],
  "correct_answer": "верный ответ или null"}
 
-verdict=correct только если проверил вычисления и не нашёл ошибок.
-verdict=uncertain если условие непонятно или данных не хватает."""
+verdict="correct", если итоговый ответ и вычисления верны.
+verdict="incorrect", только если найдена реальная математическая ошибка, меняющая ответ.
+verdict="uncertain", если условие неполное."""
+
+
+def _clean_json_latex_str(val: Any) -> str:
+    s = str(val or "")
+    s = s.replace("\x0crac", "\\frac").replace("\x0c", "\\f")
+    s = s.replace("\x08egin", "\\begin").replace("\x08eta", "\\beta").replace("\x08", "\\b")
+    s = re.sub(r"\t(ext\{|imes\b|heta\b|au\b|an\b|riangle\b|o\b)", r"\\t\1", s)
+    return s
 
 
 def _parse_json_block(text: str) -> dict[str, Any]:
@@ -623,7 +631,12 @@ def _parse_json_block(text: str) -> dict[str, Any]:
     start, end = cleaned.find("{"), cleaned.rfind("}")
     if start == -1 or end == -1:
         raise ValueError("в ответе нет JSON")
-    return json.loads(cleaned[start : end + 1])
+    raw_json = cleaned[start : end + 1]
+    safe_json = re.sub(r'\\(?![/\"\\]|u[0-9a-fA-F]{4})', r"\\\\", raw_json)
+    try:
+        return json.loads(safe_json)
+    except json.JSONDecodeError:
+        return json.loads(raw_json)
 
 
 def model_layer(
@@ -661,8 +674,12 @@ def model_layer(
 
     verdict = str(data.get("verdict", "uncertain")).lower()
     issues = data.get("issues") or []
-    correct_answer = data.get("correct_answer") or ""
-    issue_text = "; ".join(str(i) for i in issues[:4]) if isinstance(issues, list) else str(issues)
+    correct_answer = _clean_json_latex_str(data.get("correct_answer") or "")
+    issue_text = (
+        "; ".join(_clean_json_latex_str(i) for i in issues[:4])
+        if isinstance(issues, list)
+        else _clean_json_latex_str(issues)
+    )
 
     if verdict == "correct":
         return Check("кросс-модель", "pass", f"{verifier} не нашёл ошибок"), correct_answer
@@ -694,7 +711,7 @@ class Verifier:
         solution: str,
         solver_model: str,
         answer: str | None = None,
-        use_model: bool = True,
+        use_model: bool = False,
     ) -> VerificationReport:
         started = time.perf_counter()
         checks: list[Check] = []
@@ -703,8 +720,8 @@ class Verifier:
         symbolic = sympy_layer(problem, final_answer or solution)
         checks.append(symbolic)
 
-        # Если SymPy уже математически доказал правильность ответа (pass), не тратим 25 с на выгрузку/загрузку второй LLM
-        if use_model and symbolic.status != "pass":
+        # Если SymPy уже математически доказал правильность ответа (pass), не тратим время и VRAM на вторую LLM
+        if use_model and symbolic.status not in ("pass", "fail"):
             model_check, _ = model_layer(problem, solution, solver_model, self.llm)
             checks.append(model_check)
 
@@ -735,8 +752,9 @@ class Verifier:
         reports = []
         for item in items:
             started = time.perf_counter()
-            checks = [sympy_layer(item["problem"], item.get("answer") or item["solution"])]
-            if use_model:
+            symbolic = sympy_layer(item["problem"], item.get("answer") or item["solution"])
+            checks = [symbolic]
+            if use_model and symbolic.status not in ("pass", "fail"):
                 model_check, _ = model_layer(
                     item["problem"],
                     item["solution"],
@@ -764,21 +782,16 @@ def _decide(checks: Sequence[Check]) -> tuple[str, float]:
     symbolic = next((c for c in checks if c.layer == "sympy"), None)
     model = next((c for c in checks if c.layer == "кросс-модель"), None)
 
-    # Детерминированный пересчёт имеет приоритет над любым мнением.
+    # Детерминированный символьный пересчёт SymPy имеет абсолютный приоритет над мнением языковой модели.
     if symbolic and symbolic.status == "fail":
         return VERDICT_DISPUTED, 0.95
+    if symbolic and symbolic.status == "pass":
+        return VERDICT_CONFIRMED, 0.95
+
     if model and model.status == "fail":
         return VERDICT_DISPUTED, 0.8
-
-    if symbolic and symbolic.status == "pass":
-        if model and model.status == "pass":
-            return VERDICT_CONFIRMED, 0.97
-        if model and model.status == "fail":
-            return VERDICT_DISPUTED, 0.85
-        return VERDICT_CONFIRMED, 0.88
-
     if model and model.status == "pass":
-        return VERDICT_CONFIRMED, 0.6
+        return VERDICT_CONFIRMED, 0.65
 
     return VERDICT_UNVERIFIED, 0.25
 

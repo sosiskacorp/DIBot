@@ -207,6 +207,7 @@ class LLMClient:
         json_format: bool | str | None = None,
         timeout: float | None = None,
         max_attempts: int = 2,
+        on_stream: Any = None,
     ) -> ChatResult:
         """Отправить диалог и получить ответ.
 
@@ -245,6 +246,7 @@ class LLMClient:
                     timeout=timeout or self.timeout,
                     max_attempts=max_attempts,
                     task=route.task,
+                    on_stream=on_stream,
                 )
                 if candidate != chain[0]:
                     log.warning("Задача %s: основная модель недоступна, ответила %s", route.task, candidate)
@@ -361,6 +363,7 @@ class LLMClient:
         timeout: float,
         max_attempts: int,
         task: str,
+        on_stream: Any = None,
     ) -> ChatResult:
         """Отправить запрос к Ollama в потоковом режиме (stream=True).
 
@@ -403,7 +406,7 @@ class LLMClient:
                         )
                     resp.raise_for_status()
 
-                    for raw_line in resp.iter_lines(decode_unicode=True):
+                    for raw_line in resp.iter_lines(chunk_size=1, decode_unicode=True):
                         if not raw_line:
                             continue
                         line = raw_line.strip() if isinstance(raw_line, str) else raw_line.decode("utf-8", errors="replace").strip()
@@ -420,13 +423,23 @@ class LLMClient:
                                 raise ModelUnavailable(f"Ollama не знает модель {model!r}: {err_msg}")
                             raise LLMError(f"Ошибка Ollama ({model}): {err_msg}")
 
-                        msg = chunk.get("message") or {}
-                        if msg.get("content"):
-                            text_parts.append(str(msg["content"]))
-                        if msg.get("thinking"):
-                            think_parts.append(str(msg["thinking"]))
                         if chunk.get("model"):
                             resp_model = str(chunk["model"])
+                        msg = chunk.get("message") or {}
+                        if msg.get("thinking"):
+                            think_parts.append(str(msg["thinking"]))
+                            if on_stream is not None:
+                                try:
+                                    on_stream("thinking", "".join(think_parts), resp_model)
+                                except Exception:
+                                    pass
+                        if msg.get("content"):
+                            text_parts.append(str(msg["content"]))
+                            if on_stream is not None:
+                                try:
+                                    on_stream("content", "".join(text_parts), resp_model)
+                                except Exception:
+                                    pass
                         if chunk.get("done"):
                             prompt_tokens = int(chunk.get("prompt_eval_count") or prompt_tokens)
                             output_tokens = int(chunk.get("eval_count") or output_tokens)

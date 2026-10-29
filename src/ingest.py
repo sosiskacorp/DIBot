@@ -165,10 +165,22 @@ def fix_mojibake_and_tex(text: str) -> str:
     return format_math_markdown(text)
 
 
+def repair_latex_control_chars(text: str) -> str:
+    """Восстановить команды LaTeX (\\frac, \\text, \\begin, \\times и др.), повреждённые при парсинге JSON."""
+    if not text:
+        return ""
+    s = text.replace("\x0crac", r"\frac").replace("\x0c", r"\f")
+    s = s.replace("\x08egin", r"\begin").replace("\x08eta", r"\beta").replace("\x08inom", r"\binom").replace("\x08ar", r"\bar")
+    s = re.sub(r"\t(ext\{|imes\b|heta\b|au\b|an\b|riangle\b|o\b|ag\{)", r"\\t\1", s)
+    return s
+
+
 def format_math_markdown(text: str) -> str:
     """Нормализовать математические формулы LaTeX для корректного рендеринга KaTeX в Streamlit Markdown."""
     if not text:
         return ""
+
+    text = repair_latex_control_chars(text)
 
     # 1. Заменяем блочные \[ ... \] на $$ ... $$
     def _repl_display_bracket(m: re.Match) -> str:
@@ -177,53 +189,74 @@ def format_math_markdown(text: str) -> str:
 
     text = re.sub(r"\\\[\s*(.*?)\s*\\\]", _repl_display_bracket, text, flags=re.DOTALL)
 
-    # 2. Заменяем строчные \( ... \) на $...$ (без внутренних пробелов по краям!)
+    # 2. Заменяем строчные \( ... \) на $...$ (или $$...$$, если внутри матрица/многострочник)
     def _repl_inline_paren(m: re.Match) -> str:
         inner = m.group(1).strip()
         if not inner:
             return ""
-        if "\n" in inner or "\\tag{" in inner:
+        if "\n" in inner or "\\tag{" in inner or "\\begin{" in inner:
             return f"\n\n$$\n{inner}\n$$\n\n"
         return f"${inner}$"
 
     text = re.sub(r"\\\(\s*(.*?)\s*\\\)", _repl_inline_paren, text, flags=re.DOTALL)
 
-    # 3. Выносим $$ ... $$, стоящие внутри строки текста, в отдельный блок (иначе KaTeX не рендерит \tag{} и \lim\limits)
-    def _repl_double_dollar(m: re.Match) -> str:
+    # 3. Если внутри одиночных $ ... $ есть окружение \begin{...}...\end{...}, переводим ВСЮ формулу целиком в $$ ... $$
+    #    (чтобы A = \begin{pmatrix}...\end{pmatrix} и \Delta = \begin{vmatrix}...\end{vmatrix} = 5 не разрывались!)
+    text = re.sub(
+        r"(?<!\$)\$(?!\$)([^$]*?\\begin\{[^}]+\}[\s\S]*?\\end\{[^}]+\}[^$]*?)(?<!\$)\$(?!\$)",
+        lambda m: f"\n\n$$\n{m.group(1).strip()}\n$$\n\n",
+        text,
+    )
+
+    # 4. Выносим $$ ... $$ в отдельный блок и защищаем их плейсхолдерами, чтобы шаг 6 не рвал матрицы внутри $$ ... $$
+    protected_blocks: list[str] = []
+
+    def _stash_display_dollar(m: re.Match) -> str:
         inner = m.group(1).strip()
         if not inner:
             return ""
-        return f"\n\n$$\n{inner}\n$$\n\n"
+        idx = len(protected_blocks)
+        protected_blocks.append(f"\n\n$$\n{inner}\n$$\n\n")
+        return f"\x00MATHBLOCK{idx}\x00"
 
-    text = re.sub(r"\$\$\s*(.*?)\s*\$\$", _repl_double_dollar, text, flags=re.DOTALL)
+    text = re.sub(r"\$\$\s*(.*?)\s*\$\$", _stash_display_dollar, text, flags=re.DOTALL)
 
-    # 4. Убираем пробелы сразу после открывающего $ и перед закрывающим $ в однострочных формулах ($ x + y $ -> $x + y$),
-    #    так как парсер remark-math в Streamlit требует отсутствия пробела у границ одиночного $.
-    def _fix_inline_dollar_line(line: str) -> str:
-        if "$" not in line or line.strip().startswith("$$"):
+    # 5. Убираем пробелы сразу после открывающего $ и перед закрывающим $ в однострочных формулах ($ x + y $ -> $x + y$)
+    #    и также защищаем их плейсхолдерами
+    def _fix_and_stash_inline_line(line: str) -> str:
+        if "$" not in line:
             return line
-        # Находим пары одиночных $...$ в пределах одной строки
+
+        def _stash_inline(m: re.Match) -> str:
+            inner = m.group(1).strip()
+            idx = len(protected_blocks)
+            protected_blocks.append(f"${inner}$")
+            return f"\x00MATHBLOCK{idx}\x00"
+
         return re.sub(
             r"(?<!\$)\$(?!\$)[ \t]*([^$\n]+?)[ \t]*(?<!\$)\$(?!\$)",
-            lambda m: f"${m.group(1).strip()}$",
+            _stash_inline,
             line,
         )
 
-    lines = [_fix_inline_dollar_line(ln) for ln in text.splitlines()]
+    lines = [_fix_and_stash_inline_line(ln) for ln in text.splitlines()]
     text = "\n".join(lines)
 
-    # 5. Оборачиваем «голые» окружения \begin{pmatrix|bmatrix|vmatrix|matrix|cases|aligned|align}...\end{...} вне $$
+    # 6. Оборачиваем только действительно «голые» окружения \begin{pmatrix|...}...\end{...}, которые были вне $ и $$
     def _wrap_bare_env(m: re.Match) -> str:
-        full = m.group(0)
-        return f"\n\n$$\n{full.strip()}\n$$\n\n"
+        full = m.group(0).strip()
+        return f"\n\n$$\n{full}\n$$\n\n"
 
-    # Применяем только к блокам, перед которыми нет $$
     text = re.sub(
-        r"(?<!\$\$\n)\\begin\{(pmatrix|bmatrix|vmatrix|Bmatrix|matrix|cases|aligned|align\*?|array)\}.*?\\end\{\1\}",
+        r"\\begin\{(pmatrix|bmatrix|vmatrix|Bmatrix|matrix|cases|aligned|align\*?|array)\}.*?\\end\{\1\}",
         _wrap_bare_env,
         text,
         flags=re.DOTALL,
     )
+
+    # 7. Восстанавливаем защищённые математические блоки
+    for idx, block in enumerate(protected_blocks):
+        text = text.replace(f"\x00MATHBLOCK{idx}\x00", block)
 
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()

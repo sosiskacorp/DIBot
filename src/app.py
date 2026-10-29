@@ -18,6 +18,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -685,34 +686,61 @@ with tabs[0]:
                 render_rich_content(display_text)
 
             with st.chat_message("assistant"):
-                spinner_msg = (
-                    "Распознаю фото (qwen3-vl), ищу в материалах и готовлю ответ…"
+                status_placeholder = st.empty()
+                think_placeholder = st.empty()
+                stream_placeholder = st.empty()
+                status_placeholder.caption(
+                    "👁️ Распознаю фото (qwen3-vl) и ищу в материалах…"
                     if attached_images
-                    else "Готовлю ответ…"
+                    else "⚡ Подключаюсь к модели и ищу в материалах…"
                 )
-                with st.spinner(spinner_msg):
-                    try:
-                        tutor = get_tutor()
-                        tutor.store.reload()
-                        answer = tutor.ask(
-                            question=user_text,
-                            course=None if selected_chat_course == "Все курсы" else selected_chat_course,
-                            use_web=use_web,
-                            verify=do_verify,
-                            history=history_messages,
-                            task=forced_task,
-                            images=attached_images if attached_images else None,
-                        )
-                    except LLMError as exc:
-                        st.error(f"Ошибка обращения к модели: {exc}")
-                    else:
-                        assistant_turn = {
-                            "role": "assistant",
-                            "content": answer.text,
-                            "answer": answer,
-                        }
-                        st.session_state.chat_turns.append(assistant_turn)
-                        render_assistant_turn(assistant_turn)
+                last_ui_ts = [0.0]
+
+                def _on_stream(kind: str, text_so_far: str, model_name: str) -> None:
+                    now = time.perf_counter()
+                    if kind != "status" and (now - last_ui_ts[0]) < 0.08:
+                        return
+                    last_ui_ts[0] = now
+                    if kind == "status":
+                        status_placeholder.caption(f"⏳ {text_so_far}")
+                    elif kind == "thinking":
+                        status_placeholder.caption(f"💭 `{model_name}` размышляет над задачей в реальном времени…")
+                        with think_placeholder.expander("💭 Размышления модели (в реальном времени)…", expanded=True):
+                            st.caption(text_so_far[-3000:])
+                    elif kind == "content":
+                        status_placeholder.caption(f"✍️ `{model_name}` пишет ответ в реальном времени…")
+                        think_placeholder.empty()
+                        stream_placeholder.markdown(format_math_markdown(text_so_far) + " ▌")
+
+                try:
+                    tutor = get_tutor()
+                    tutor.store.reload()
+                    answer = tutor.ask(
+                        question=user_text,
+                        course=None if selected_chat_course == "Все курсы" else selected_chat_course,
+                        use_web=use_web,
+                        verify=do_verify,
+                        history=history_messages,
+                        task=forced_task,
+                        images=attached_images if attached_images else None,
+                        on_stream=_on_stream,
+                    )
+                except LLMError as exc:
+                    status_placeholder.empty()
+                    think_placeholder.empty()
+                    stream_placeholder.empty()
+                    st.error(f"Ошибка обращения к модели: {exc}")
+                else:
+                    status_placeholder.empty()
+                    think_placeholder.empty()
+                    stream_placeholder.empty()
+                    assistant_turn = {
+                        "role": "assistant",
+                        "content": answer.text,
+                        "answer": answer,
+                    }
+                    st.session_state.chat_turns.append(assistant_turn)
+                    render_assistant_turn(assistant_turn)
 
 
 # ============================================================ 2. DISPACE НГТУ
