@@ -437,7 +437,7 @@ class Tutor:
                 {"role": "system", "content": PRACTICE_SYSTEM},
                 {"role": "user", "content": prompt},
             ],
-            task="math",
+            task="math" if deep_think else "practice",
             think=deep_think,
             json_format="json",
             on_stream=on_stream,
@@ -559,26 +559,54 @@ def _parse_tasks(text: str) -> list[dict[str, Any]]:
     if start == -1 or end == -1:
         return []
     raw_json = cleaned[start : end + 1]
-    safe_json = re.sub(r'\\(?![/\"\\]|u[0-9a-fA-F]{4})', r"\\\\", raw_json)
+
+    tasks_raw = None
+    # 1. Попытка с strict=False (допускает управляющие символы и переносы)
     try:
-        data = json.loads(safe_json)
-    except json.JSONDecodeError:
+        data = json.loads(raw_json, strict=False)
+        tasks_raw = data.get("tasks") if isinstance(data, dict) else data
+    except Exception:
+        pass
+
+    # 2. Попытка экранировать одиночные LaTeX слэши (\begin, \lim, \frac), не трогая \"
+    if not isinstance(tasks_raw, list):
+        safe_json = re.sub(r'\\(?!["/])', r"\\\\", raw_json)
         try:
-            data = json.loads(raw_json)
-        except json.JSONDecodeError:
-            return []
-    tasks = data.get("tasks") if isinstance(data, dict) else data
-    if not isinstance(tasks, list):
+            data = json.loads(safe_json, strict=False)
+            tasks_raw = data.get("tasks") if isinstance(data, dict) else data
+        except Exception:
+            pass
+
+    # 3. Регекс-парсинг отдельных заданий, если общий JSON повреждён
+    if not isinstance(tasks_raw, list):
+        items = []
+        task_pat = re.compile(
+            r'\{\s*"statement"\s*:\s*"(.*?)"\s*,\s*"answer"\s*:\s*"(.*?)"\s*,\s*"solution"\s*:\s*"(.*?)"',
+            re.DOTALL,
+        )
+        for m in task_pat.finditer(raw_json):
+            items.append(
+                {
+                    "statement": m.group(1),
+                    "answer": m.group(2),
+                    "solution": m.group(3),
+                    "difficulty": "средний",
+                }
+            )
+        tasks_raw = items
+
+    if not isinstance(tasks_raw, list):
         return []
+
     out = []
-    for item in tasks:
+    for item in tasks_raw:
         if isinstance(item, dict) and item.get("statement"):
             out.append(
                 {
                     "statement": format_math_markdown(str(item["statement"]).strip()),
                     "answer": format_math_markdown(str(item.get("answer", "")).strip()),
                     "solution": format_math_markdown(str(item.get("solution", "")).strip()),
-                    "difficulty": str(item.get("difficulty", "")).strip(),
+                    "difficulty": str(item.get("difficulty", "средний")).strip(),
                 }
             )
     return out
