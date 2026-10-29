@@ -10,25 +10,25 @@
   "models": {
     "qwen3.5:9b": {
       "role": "general",
-      "num_ctx": 4096,
+      "num_ctx": 8192,
       "max_ctx": 262144,
       "note": "Быстрый универсал. Конспекты, объяснения, роль критика."
     },
     "deepseek-r1:8b": {
       "role": "reasoning",
-      "num_ctx": 4096,
+      "num_ctx": 8192,
       "max_ctx": 131072,
       "note": "Пошаговые рассуждения. Математика, логика, разбор условий."
     },
     "qwen2.5-coder:7b": {
       "role": "code",
-      "num_ctx": 4096,
+      "num_ctx": 8192,
       "max_ctx": 32768,
       "note": "Код, LaTeX, генерация проверок для sympy."
     },
     "qwen3-vl:8b": {
       "role": "vision",
-      "num_ctx": 4096,
+      "num_ctx": 8192,
       "max_ctx": 262144,
       "note": "Сканы страниц, фото задач, схемы, скриншоты."
     }
@@ -77,7 +77,7 @@
       "temperature": 0.15,
       "think": true,
       "options": {
-        "num_predict": 3072
+        "num_predict": 4096
       }
     },
     "code": {
@@ -86,7 +86,7 @@
       "temperature": 0.1,
       "think": false,
       "options": {
-        "num_predict": 2048
+        "num_predict": 3072
       }
     },
     "latex": {
@@ -95,7 +95,7 @@
       "temperature": 0.1,
       "think": false,
       "options": {
-        "num_predict": 2048
+        "num_predict": 3072
       }
     },
     "vision": {
@@ -104,7 +104,7 @@
       "temperature": 0.2,
       "think": false,
       "options": {
-        "num_predict": 2048
+        "num_predict": 4096
       }
     },
     "verify": {
