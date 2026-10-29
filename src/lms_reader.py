@@ -24,10 +24,14 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
+import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import sys
 import time
 from dataclasses import dataclass, field
@@ -57,6 +61,81 @@ MESSAGES_URL = f"{BASE_URL}/messages"
 
 DEFAULT_PROFILE = PROJECT_ROOT / "data" / "browser_profile"
 DEFAULT_STATE = PROJECT_ROOT / "data" / "browser_state.json"
+ENCRYPTED_TOKEN_FILE = PROJECT_ROOT / "data" / "encrypted_dispace_token.json"
+GATEWAY_TOKEN_FILE = PROJECT_ROOT / "data" / "gateway_token.txt"
+
+
+def _derive_keystream(secret_key: str, salt: bytes, length: int) -> tuple[bytes, bytes]:
+    """Получить ключевой поток для шифрования и ключ HMAC из 256-битного секрета OLLAMA_API_KEY."""
+    master = hashlib.pbkdf2_hmac("sha256", secret_key.encode("utf-8"), salt, 150_000, dklen=64)
+    enc_key, mac_key = master[:32], master[32:]
+    blocks = []
+    counter = 0
+    while sum(len(b) for b in blocks) < length:
+        blocks.append(
+            hmac.new(enc_key, salt + counter.to_bytes(4, "big"), hashlib.sha256).digest()
+        )
+        counter += 1
+    return b"".join(blocks)[:length], mac_key
+
+
+def save_encrypted_dispace_token(
+    jwt_token: str,
+    gateway_key: str | None = None,
+    out_file: Path = ENCRYPTED_TOKEN_FILE,
+) -> bool:
+    """Зашифровать токен DiSpace ключом OLLAMA_API_KEY (PBKDF2-SHA256 + HMAC-SHA256) для облачного деплоя."""
+    key = (
+        gateway_key
+        or os.environ.get("OLLAMA_API_KEY", "").strip()
+        or (GATEWAY_TOKEN_FILE.read_text(encoding="utf-8").strip() if GATEWAY_TOKEN_FILE.exists() else "")
+    )
+    if not key or not jwt_token:
+        return False
+    raw = jwt_token.encode("utf-8")
+    salt = secrets.token_bytes(16)
+    stream, mac_key = _derive_keystream(key, salt, len(raw))
+    cipher = bytes(a ^ b for a, b in zip(raw, stream))
+    tag = hmac.new(mac_key, salt + cipher, hashlib.sha256).hexdigest()
+    payload = {
+        "kdf": "pbkdf2-hmac-sha256-150k",
+        "salt": base64.b64encode(salt).decode("ascii"),
+        "ciphertext": base64.b64encode(cipher).decode("ascii"),
+        "mac": tag,
+    }
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    out_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return True
+
+
+def load_encrypted_dispace_token(
+    gateway_key: str | None = None,
+    enc_file: Path = ENCRYPTED_TOKEN_FILE,
+) -> str | None:
+    """Расшифровать токен DiSpace при наличии секретного ключа OLLAMA_API_KEY."""
+    if not enc_file.exists():
+        return None
+    key = (
+        gateway_key
+        or os.environ.get("OLLAMA_API_KEY", "").strip()
+        or os.environ.get("DIBOT_GATEWAY_TOKEN", "").strip()
+        or (GATEWAY_TOKEN_FILE.read_text(encoding="utf-8").strip() if GATEWAY_TOKEN_FILE.exists() else "")
+    )
+    if not key:
+        return None
+    try:
+        data = json.loads(enc_file.read_text(encoding="utf-8"))
+        salt = base64.b64decode(data["salt"])
+        cipher = base64.b64decode(data["ciphertext"])
+        expected_mac = str(data["mac"])
+        stream, mac_key = _derive_keystream(key, salt, len(cipher))
+        actual_mac = hmac.new(mac_key, salt + cipher, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(actual_mac, expected_mac):
+            return None
+        plain = bytes(a ^ b for a, b in zip(cipher, stream)).decode("utf-8")
+        return plain.strip() or None
+    except Exception:
+        return None
 
 # Собираем текст из основного содержимого, а не из навигации.
 TEXT_JS = r"""
@@ -104,32 +183,65 @@ def _session_bootstrap_js(
     )
 
 
+def _fetch_token_from_remote_gateway() -> str | None:
+    """Если приложение запущено в облаке и подключено к шлюзу домашнего ПК, запросить токен DiSpace у шлюза."""
+    gw_url = os.environ.get("OLLAMA_BASE_URL", "").strip().rstrip("/")
+    gw_key = (
+        os.environ.get("OLLAMA_API_KEY", "").strip()
+        or os.environ.get("DIBOT_GATEWAY_TOKEN", "").strip()
+    )
+    if not gw_url or not gw_key or "localhost" in gw_url or "127.0.0.1" in gw_url:
+        return None
+    try:
+        resp = requests.get(
+            f"{gw_url}/dispace/token",
+            headers={"Authorization": f"Bearer {gw_key}", "X-DIBot-Token": gw_key},
+            timeout=6,
+        )
+        if resp.ok:
+            tok = str((resp.json() or {}).get("token") or "").strip().strip('"')
+            if tok:
+                os.environ["DISPACE_AUTH_TOKEN"] = tok
+                return tok
+    except Exception:
+        pass
+    return None
+
+
 def load_auth_token(state_file: Path = DEFAULT_STATE) -> str | None:
-    """Извлечь JWT-токен DiSpace (из переменной окружения DISPACE_AUTH_TOKEN или browser_state.json)."""
+    """Извлечь JWT-токен DiSpace (из DISPACE_AUTH_TOKEN, browser_state.json или защищённого шлюза домашнего ПК)."""
     env_tok = os.environ.get("DISPACE_AUTH_TOKEN", "").strip().strip('"')
     if env_tok:
         return env_tok
-    if not state_file.exists():
-        return None
-    try:
-        state = json.loads(state_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
+    if state_file.exists():
+        try:
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            for origin_entry in state.get("origins") or []:
+                if "dispace.nstu.ru" not in str(origin_entry.get("origin", "")):
+                    continue
+                for item in origin_entry.get("localStorage") or []:
+                    if item.get("name") == "authToken":
+                        raw_val = item.get("value")
+                        if not raw_val or raw_val == "null":
+                            break
+                        try:
+                            parsed = json.loads(raw_val)
+                            if parsed:
+                                tok_str = str(parsed)
+                                save_encrypted_dispace_token(tok_str)
+                                return tok_str
+                        except json.JSONDecodeError:
+                            tok_str = str(raw_val).strip('"')
+                            save_encrypted_dispace_token(tok_str)
+                            return tok_str
+        except (OSError, json.JSONDecodeError):
+            pass
 
-    for origin_entry in state.get("origins") or []:
-        if "dispace.nstu.ru" not in str(origin_entry.get("origin", "")):
-            continue
-        for item in origin_entry.get("localStorage") or []:
-            if item.get("name") == "authToken":
-                raw_val = item.get("value")
-                if not raw_val or raw_val == "null":
-                    return None
-                try:
-                    parsed = json.loads(raw_val)
-                    return str(parsed) if parsed else None
-                except json.JSONDecodeError:
-                    return str(raw_val).strip('"')
-    return None
+    dec_tok = load_encrypted_dispace_token()
+    if dec_tok:
+        return dec_tok
+
+    return _fetch_token_from_remote_gateway()
 
 
 @dataclass
@@ -867,7 +979,14 @@ class Reader:
         self._capture = False
 
     def start(self) -> None:
-        from playwright.sync_api import sync_playwright
+        try:
+            from playwright.sync_api import sync_playwright
+        except ModuleNotFoundError as exc:
+            raise LoginRequired(
+                "Локальный браузер Playwright недоступен в облачном контейнере. "
+                "В облаке подключи шлюз домашнего ПК (OLLAMA_BASE_URL + OLLAMA_API_KEY) "
+                "или укажи DISPACE_AUTH_TOKEN в настройках."
+            ) from exc
 
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         self._playwright = sync_playwright().start()

@@ -29,6 +29,7 @@ import datetime as dt
 import hmac
 import json
 import os
+import queue
 import re
 import secrets
 import shutil
@@ -51,7 +52,7 @@ OLLAMA_UPSTREAM = "http://127.0.0.1:11434"
 DEFAULT_GATEWAY_HOST = "127.0.0.1"
 DEFAULT_GATEWAY_PORT = 11435
 
-ALLOWED_GET_PATHS = {"/api/tags", "/api/ps", "/api/version", "/health"}
+ALLOWED_GET_PATHS = {"/api/tags", "/api/ps", "/api/version", "/health", "/dispace/token"}
 ALLOWED_POST_PATHS = {"/api/chat", "/api/generate", "/api/show"}
 
 # Защита от брутфорса: IP -> [timestamps неверных попыток]
@@ -207,6 +208,22 @@ class OllamaGatewayHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True, "service": "dibot-secure-ollama-gateway"})
             return
 
+        if path == "/dispace/token":
+            if not self._check_auth():
+                return
+            try:
+                sys.path.insert(0, str(PROJECT_ROOT / "src"))
+                from lms_reader import get_api_client, load_auth_token
+
+                tok = load_auth_token()
+                api = get_api_client(auto_refresh=True)
+                if api and api.token:
+                    tok = api.token
+                self._send_json(200, {"ok": bool(tok), "token": tok or ""})
+            except Exception as exc:
+                self._send_json(200, {"ok": False, "token": "", "error": str(exc)})
+            return
+
         if path not in ALLOWED_GET_PATHS:
             self._send_json(
                 403,
@@ -269,24 +286,68 @@ class OllamaGatewayHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(out)
             else:
-                with requests.post(
-                    f"{self.upstream_url}{path}",
-                    data=raw_body,
-                    headers={"Content-Type": "application/json"},
-                    stream=True,
-                    timeout=600,
-                ) as resp:
-                    self.send_response(resp.status_code)
-                    self.send_header("Content-Type", "application/x-ndjson")
-                    self.send_header("Cache-Control", "no-cache")
-                    self.send_header("Connection", "close")
-                    self.end_headers()
-                    for chunk in resp.iter_lines():
-                        if chunk:
-                            self.wfile.write(chunk + b"\n")
-                            self.wfile.flush()
-        except requests.RequestException as exc:
-            self._send_json(502, {"error": f"Ошибка обращения к локальному Ollama: {exc}"})
+                # Немедленно отправляем заголовки 200 OK и шлём пустые строки (\n) каждые 5 секунд,
+                # пока Ollama выгружает/загружает модель в VRAM или думает над задачей.
+                # Это гарантирует, что Cloudflare Tunnel никогда не разорвёт соединение с ошибкой 524!
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-ndjson")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("X-Accel-Buffering", "no")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(b"\n")
+                self.wfile.flush()
+
+                line_q: queue.Queue[bytes | None] = queue.Queue()
+
+                def _upstream_worker() -> None:
+                    try:
+                        with requests.post(
+                            f"{self.upstream_url}{path}",
+                            data=raw_body,
+                            headers={"Content-Type": "application/json"},
+                            stream=True,
+                            timeout=600,
+                        ) as resp:
+                            if not resp.ok:
+                                err_payload = json.dumps(
+                                    {"error": f"HTTP {resp.status_code}: {resp.text[:300]}", "done": True},
+                                    ensure_ascii=False,
+                                ).encode("utf-8")
+                                line_q.put(err_payload + b"\n")
+                                return
+                            for chunk in resp.iter_lines():
+                                if chunk:
+                                    line_q.put(chunk + b"\n")
+                    except Exception as exc:
+                        err_payload = json.dumps(
+                            {"error": f"Ошибка локального Ollama: {exc}", "done": True},
+                            ensure_ascii=False,
+                        ).encode("utf-8")
+                        line_q.put(err_payload + b"\n")
+                    finally:
+                        line_q.put(None)
+
+                worker = threading.Thread(target=_upstream_worker, daemon=True)
+                worker.start()
+
+                while True:
+                    try:
+                        item = line_q.get(timeout=5.0)
+                    except queue.Empty:
+                        # Heartbeat для удержания соединения Cloudflare
+                        self.wfile.write(b"\n")
+                        self.wfile.flush()
+                        continue
+                    if item is None:
+                        break
+                    self.wfile.write(item)
+                    self.wfile.flush()
+        except (requests.RequestException, OSError) as exc:
+            try:
+                self._send_json(502, {"error": f"Ошибка обращения к локальному Ollama: {exc}"})
+            except Exception:
+                pass
 
     def do_DELETE(self) -> None:
         self._send_json(403, {"error": "Удаление моделей через удалённый шлюз строго запрещено."})

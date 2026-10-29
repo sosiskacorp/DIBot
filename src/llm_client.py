@@ -357,10 +357,16 @@ class LLMClient:
         max_attempts: int,
         task: str,
     ) -> ChatResult:
+        """Отправить запрос к Ollama в потоковом режиме (stream=True).
+
+        Потоковый режим критически важен при работе через HTTPS-туннели (Cloudflare):
+        байты идут непрерывно по мере генерации токенов, поэтому прокси никогда
+        не обрывает соединение по таймауту ожидания (HTTP 524) на долгих рассуждениях.
+        """
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "stream": False,
+            "stream": True,
             "think": think,
             "options": dict(options),
             "keep_alive": self.keep_alive,
@@ -372,16 +378,55 @@ class LLMClient:
         while True:
             attempt += 1
             started = time.perf_counter()
+            text_parts: list[str] = []
+            think_parts: list[str] = []
+            resp_model = model
+            prompt_tokens = 0
+            output_tokens = 0
+            done_reason = ""
+
             try:
-                resp = self._session.post(
-                    f"{self.base_url}/api/chat", json=payload, timeout=timeout
-                )
-                if resp.status_code == 404:
-                    raise ModelUnavailable(
-                        f"Ollama не знает модель {model!r}: {_error_message(resp)}"
-                    )
-                resp.raise_for_status()
-                data = resp.json()
+                with self._session.post(
+                    f"{self.base_url}/api/chat",
+                    json=payload,
+                    stream=True,
+                    timeout=(15, timeout),
+                ) as resp:
+                    if resp.status_code == 404:
+                        raise ModelUnavailable(
+                            f"Ollama не знает модель {model!r}: {_error_message(resp)}"
+                        )
+                    resp.raise_for_status()
+
+                    for raw_line in resp.iter_lines(decode_unicode=True):
+                        if not raw_line:
+                            continue
+                        line = raw_line.strip() if isinstance(raw_line, str) else raw_line.decode("utf-8", errors="replace").strip()
+                        if not line:
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+
+                        if chunk.get("error"):
+                            err_msg = str(chunk["error"])
+                            if "not found" in err_msg.lower():
+                                raise ModelUnavailable(f"Ollama не знает модель {model!r}: {err_msg}")
+                            raise LLMError(f"Ошибка Ollama ({model}): {err_msg}")
+
+                        msg = chunk.get("message") or {}
+                        if msg.get("content"):
+                            text_parts.append(str(msg["content"]))
+                        if msg.get("thinking"):
+                            think_parts.append(str(msg["thinking"]))
+                        if chunk.get("model"):
+                            resp_model = str(chunk["model"])
+                        if chunk.get("done"):
+                            prompt_tokens = int(chunk.get("prompt_eval_count") or prompt_tokens)
+                            output_tokens = int(chunk.get("eval_count") or output_tokens)
+                            done_reason = str(chunk.get("done_reason") or "stop")
+                            break
                 break
             except requests.ConnectionError as exc:
                 if attempt >= max_attempts:
@@ -391,16 +436,15 @@ class LLMClient:
                 time.sleep(1.5 * attempt)
 
         elapsed = time.perf_counter() - started
-        message = data.get("message") or {}
         return ChatResult(
-            text=(message.get("content") or "").strip(),
-            model=data.get("model") or model,
+            text="".join(text_parts).strip(),
+            model=resp_model,
             task=task,
-            thinking=(message.get("thinking") or "").strip(),
-            prompt_tokens=int(data.get("prompt_eval_count") or 0),
-            output_tokens=int(data.get("eval_count") or 0),
+            thinking="".join(think_parts).strip(),
+            prompt_tokens=prompt_tokens,
+            output_tokens=output_tokens,
             seconds=round(elapsed, 3),
-            done_reason=data.get("done_reason") or "",
+            done_reason=done_reason,
         )
 
     def _post_cloud_chat(

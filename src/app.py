@@ -487,28 +487,45 @@ with tabs[1]:
         "локальная сессия браузера (`authToken` и SSO Keycloak). Скачанные курсы мгновенно попадают во вкладку «Материалы»."
     )
 
+    _is_cloud_env = importlib.util.find_spec("playwright") is None or sys.platform != "win32"
+
     top_c1, top_c2, top_c3 = st.columns([2, 1, 1])
     with top_c1:
         if dispace_api:
             st.success("✅ Подключено к dispace.nstu.ru (JWT-токен активен)")
         else:
-            st.warning("⚠️ Сессия не активна. Нажми «Войти через браузер» или «Обновить по SSO».")
+            st.warning("⚠️ Сессия DiSpace не активна. Синхронизируй с домашним ПК или укажи токен ниже.")
     with top_c2:
-        if st.button("🔄 Обновить токен по SSO", width="stretch"):
-            with st.spinner("Обновляю токен через сохранённую SSO-сессию НГТУ…"):
-                refreshed = get_api_client(auto_refresh=True)
+        if st.button("🔄 Обновить / синхронизировать токен", width="stretch"):
+            with st.spinner("Получаю токен DiSpace (через шлюз домашнего ПК или SSO)…"):
+                os.environ.pop("DISPACE_AUTH_TOKEN", None)
+                refreshed = get_api_client(auto_refresh=not _is_cloud_env)
             if refreshed:
-                st.success("Токен успешно обновлён!")
+                st.success("Токен DiSpace успешно синхронизирован!")
                 st.rerun()
             else:
-                st.warning("Автообновление не сработало — нужен вход в окне браузера.")
+                st.warning(
+                    "Не удалось получить токен автоматически. Убедись, что на домашнем ПК запущен шлюз "
+                    "(OLLAMA_BASE_URL + OLLAMA_API_KEY) или вставь DISPACE_AUTH_TOKEN ниже."
+                )
     with top_c3:
-        if st.button("🔑 Войти через браузер", width="stretch"):
-            subprocess.Popen(
-                [sys.executable, str(PROJECT_ROOT / "src" / "lms_reader.py"), "--login"],
-                cwd=str(PROJECT_ROOT),
-            )
-            st.info("Открылось окно браузера. Войди в DiSpace, затем обнови страницу.")
+        if not _is_cloud_env:
+            if st.button("🔑 Войти через браузер", width="stretch"):
+                subprocess.Popen(
+                    [sys.executable, str(PROJECT_ROOT / "src" / "lms_reader.py"), "--login"],
+                    cwd=str(PROJECT_ROOT),
+                )
+                st.info("Открылось окно браузера. Войди в DiSpace, затем обнови страницу.")
+        else:
+            with st.popover("🔑 Ввести токен DiSpace", use_container_width=True):
+                manual_jwt = st.text_input(
+                    "JWT-токен (authToken из localStorage DiSpace)",
+                    value=os.environ.get("DISPACE_AUTH_TOKEN", ""),
+                    type="password",
+                )
+                if st.button("Сохранить токен", type="primary", width="stretch") and manual_jwt.strip():
+                    os.environ["DISPACE_AUTH_TOKEN"] = manual_jwt.strip().strip('"')
+                    st.rerun()
 
     dispace_section = st.segmented_control(
         "Раздел DiSpace НГТУ",
@@ -1095,50 +1112,57 @@ with tabs[3]:
     else:
         course_names = store.list_courses()
         selected_course = st.selectbox("Курс", course_names, key="notes_course")
-        sources = store.list_sources(selected_course)
-        selected = st.selectbox(
-            "Материал", sources, format_func=lambda s: s.title, key="notes_source"
+        sources = store.list_sources(selected_course) if selected_course else []
+        selected = (
+            st.selectbox(
+                "Материал", sources, format_func=lambda s: s.title, key="notes_source"
+            )
+            if sources
+            else None
         )
 
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            rebuild = st.button("✨ Собрать конспект", type="primary", width="stretch")
-        with col2:
-            st.caption(
-                f"{selected.chars} символов, {len(selected.chunk_ids)} фрагментов. "
-                "Каждый тезис получит ссылку `[#N]` на конкретный фрагмент лекции."
-            )
-
-        note_path = store.notes_dir / slugify(selected_course) / f"{slugify(selected.title)}.md"
-
-        if rebuild:
-            builder = NoteBuilder(get_tutor().llm, store)
-            progress = st.progress(0.0, text="Готовлю фрагменты…")
-
-            def on_progress(position: int, total: int, chunk) -> None:
-                progress.progress(position / max(total, 1), text=f"Обрабатываю фрагмент {position} из {total}…")
-
-            try:
-                result = builder.build(selected, on_progress=on_progress)
-            except (LLMError, ValueError) as exc:
-                st.error(f"Не удалось собрать конспект: {exc}")
-            else:
-                progress.progress(1.0, text="Готово")
-                st.success(result.summary_line())
-                st.rerun()
-
-        if note_path.exists():
-            note_md = note_path.read_text(encoding="utf-8")
-            st.download_button(
-                "📥 Скачать конспект (.md)",
-                data=note_md,
-                file_name=note_path.name,
-                mime="text/markdown",
-            )
-            with st.container(border=True):
-                st.markdown(note_md)
+        if selected is None:
+            st.info("В выбранном курсе пока нет источников.")
         else:
-            st.info("Конспект для этого материала ещё не собран. Нажми «Собрать конспект».")
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                rebuild = st.button("✨ Собрать конспект", type="primary", width="stretch")
+            with col2:
+                st.caption(
+                    f"{selected.chars} символов, {len(selected.chunk_ids)} фрагментов. "
+                    "Каждый тезис получит ссылку `[#N]` на конкретный фрагмент лекции."
+                )
+
+            note_path = store.notes_dir / slugify(selected_course) / f"{slugify(selected.title)}.md"
+
+            if rebuild:
+                builder = NoteBuilder(get_tutor().llm, store)
+                progress = st.progress(0.0, text="Готовлю фрагменты…")
+
+                def on_progress(position: int, total: int, chunk) -> None:
+                    progress.progress(position / max(total, 1), text=f"Обрабатываю фрагмент {position} из {total}…")
+
+                try:
+                    result = builder.build(selected, on_progress=on_progress)
+                except (LLMError, ValueError) as exc:
+                    st.error(f"Не удалось собрать конспект: {exc}")
+                else:
+                    progress.progress(1.0, text="Готово")
+                    st.success(result.summary_line())
+                    st.rerun()
+
+            if note_path.exists():
+                note_md = note_path.read_text(encoding="utf-8")
+                st.download_button(
+                    "📥 Скачать конспект (.md)",
+                    data=note_md,
+                    file_name=note_path.name,
+                    mime="text/markdown",
+                )
+                with st.container(border=True):
+                    st.markdown(note_md)
+            else:
+                st.info("Конспект для этого материала ещё не собран. Нажми «Собрать конспект».")
 
 
 # ============================================================== 5. ТРЕНАЖЁР
